@@ -12,7 +12,7 @@ each ⬜/🔨 line becomes a GitHub Issue and the milestones below become GitHub
 | # | Deliverable | Artifact | Status |
 |---|-------------|----------|--------|
 | 1 | Project management | This doc → GitHub Issues + Milestones after push | 🔨 |
-| 2 | Git hosting | Local repo exists; needs GitHub remote (private first, public at release) | 🔨 |
+| 2 | Git hosting | Local repo exists; needs GitHub remote — **public from day one** (decided) | 🔨 |
 | 3 | HW documentation | `docs/WS500_HARDWARE_SPEC.md` (open items in its §7) | ✅/🔨 |
 | 4 | Software Design Spec | `docs/SOFTWARE_DESIGN_SPEC.md` — architecture, regulator state machine, charge profiles, fault model | ⬜ |
 | 5 | OS firmware | `Core/` skeleton; needs HAL vendored, sensors bound, regulator implemented | 🔨 |
@@ -61,6 +61,11 @@ so a true A/B slot scheme costs half the flash — not worth it. Instead:
   update over CDC) is a *later* nice-to-have, not a dependency.
 - **Config survives updates:** config lives in the last flash page(s), outside the app
   image region, with CRC + version; `ws500ctl` can export/import as a text file.
+- **No flash protections, ever (decided):** the new firmware never sets RDP (readout
+  protection) or WRP (write protection) option bytes. The chip stays fully readable
+  and reflashable via SWD and DFU at all times — recovery is never locked out, and
+  anyone can dump/verify what's running. (This is about *our* firmware; the *stock*
+  unit may still ship with RDP set, which only affects the backup step above.)
 
 ## 4. Bring-up test firmware (`test-fw`)
 
@@ -94,5 +99,8 @@ Rules, in force until explicitly retired:
    battery bank with supervision.
 6. **Recovery always one step away** — SWD permanently wired to the bench unit; stock
    image restore rehearsed (M1) before first custom flash.
-7. If a second WS500 unit is affordable, keep one **golden unit** on stock firmware,
-   untouched, as reference and fallback.
+7. **There is exactly one WS500 unit — it is irreplaceable.** No golden spare exists,
+   so M1 (backup + rehearsed restore) is absolute: the stock image must be proven to
+   restore via DFU *before* the first custom flash, SWD stays permanently wired, and
+   any test that could plausibly damage hardware (not just brick it) gets a dry run
+   in emulation first.
