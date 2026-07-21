@@ -21,6 +21,7 @@ set(APP_SRC
 #   STM32Cube HAL (BSD-3): Drivers/STM32F0xx_HAL_Driver, Drivers/CMSIS
 #   plus startup_stm32f072xb.s and system_stm32f0xx.c.
 file(GLOB HAL_SRC CONFIGURE_DEPENDS Drivers/STM32F0xx_HAL_Driver/Src/*.c)
+list(FILTER HAL_SRC EXCLUDE REGEX "_template\\.c$")
 set(STARTUP  Drivers/CMSIS/Device/ST/STM32F0xx/Source/Templates/gcc/startup_stm32f072xb.s)
 set(SYSTEM   Drivers/CMSIS/Device/ST/STM32F0xx/Source/Templates/system_stm32f0xx.c)
 

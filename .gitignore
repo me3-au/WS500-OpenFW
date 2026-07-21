@@ -5,7 +5,8 @@
 *.map
 *.o
 *.d
-# Vendored deps (fetch per Drivers/README.md)
+# Vendored deps (fetch via scripts/fetch_deps.sh — see Drivers/README.md)
+/.deps/
 /Drivers/STM32F0xx_HAL_Driver/
 /Drivers/CMSIS/
 /Middlewares/

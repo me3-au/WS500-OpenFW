@@ -1,0 +1,34 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ARM toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi
+
+      - name: Fetch HAL/CMSIS (STM32CubeF0, pinned)
+        run: sh scripts/fetch_deps.sh
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ws500-openfw
+          path: |
+            build/ws500-openfw.elf
+            build/ws500-openfw.bin
+            build/ws500-openfw.map
