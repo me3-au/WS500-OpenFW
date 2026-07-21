@@ -9,6 +9,7 @@
  */
 #include "sensors.h"
 #include "board.h"
+#include "ina2xx.h"
 #include <math.h>
 
 static ADC_HandleTypeDef hadc1;
@@ -51,6 +52,9 @@ void sensors_init(void)
     (void)hdma_adc1;  /* wired in board.c MspInit */
     HAL_ADCEx_Calibration_Start(&hadc1);
     HAL_ADC_Start_DMA(&hadc1, (uint32_t*)s_dma, ADC_OVERSAMPLE * ADC_SCAN_LEN);
+
+    /* Current/bus-voltage monitor at the shunt (INA226/228/238 @ I2C 0x40). */
+    ina2xx_init(SHUNT_FULL_SCALE_A, SHUNT_FULL_SCALE_MV);
 }
 
 void sensors_update(void)
@@ -72,29 +76,38 @@ float sensors_vdda(void)
     return VREFINT_CAL_VREF * (float)(*VREFINT_CAL_ADDR) / (float)vref; /* mV */
 }
 
+/* NTC Beta model: 1/T = 1/T0 + (1/B)*ln(R/R0), T0=25C, R0=10k assumed.
+ * Front-end assumed a divider pull-up to Vref; adjust R_FIXED/R0 to the board. */
+static float ntc_temp_c(unsigned slot, float beta)
+{
+    const float raw = (float)sensors_raw(slot);
+    if (raw <= 0.0f || raw >= 4095.0f) return NAN;      /* open/short */
+    const float ratio = raw / (4095.0f - raw);          /* R_ntc / R_fixed */
+    const float R0_over_Rf = 1.0f;                       /* TODO: set from board */
+    const float invT = 1.0f/298.15f + (1.0f/beta) * logf(ratio * R0_over_Rf);
+    return (1.0f/invT) - 273.15f;
+}
+
 void sensors_read(reg_inputs_t *out)
 {
     const float vdda = sensors_vdda();                 /* mV */
     const float lsb  = vdda / 4095.0f / 1000.0f;       /* V per count at the pin */
 
-    /* ---- TODO: real scaling once channel binding + front-end are confirmed ---- *
-     * Each external pin is a divided/amplified version of a physical quantity.
-     *   vbat  = pin_volts(SENSOR_CH_VBAT)  * VBAT_DIVIDER;
-     *   valt  = pin_volts(SENSOR_CH_VALT)  * VALT_DIVIDER;
-     *   amps  = (pin_volts(SENSOR_CH_SHUNT) - SHUNT_OFFSET) * SHUNT_A_PER_V;
-     *   temp  = thermistor_to_c(pin_volts(SENSOR_CH_TEMP));
-     * Determine the *_DIVIDER / SHUNT_* / thermistor curve by injection or board trace. */
-    #define PIN_V(slot)  (sensors_raw(slot) * lsb)
+    /* Battery voltage: PC5 through the recovered 34.33:1 divider (fact). */
+    out->vbat = sensors_raw(SENSOR_CH_VBAT) * lsb * SENSOR_VBAT_DIVIDER;
 
-    out->vbat        = PIN_V(SENSOR_CH_VBAT);   /* placeholder: raw pin volts */
-    out->valt        = PIN_V(SENSOR_CH_VALT);
-    out->amps        = 0.0f;                     /* until shunt scaling known */
-    out->alt_temp_c  = NAN;
-    out->batt_temp_c = NAN;
-    out->rpm         = 0.0f;                     /* from stator capture / CAN */
-    out->bms_charge_ok = true;                   /* until CAN BMS wired */
+    /* Temperatures: NTC Beta model with the recovered Beta values (fact).
+     * Confirm R_FIXED/R0 and which of PA1/PA2 is the alternator sensor. */
+    out->alt_temp_c  = ntc_temp_c(SENSOR_CH_TEMP_A1, SENSOR_NTC_BETA_ALT);
+    out->batt_temp_c = ntc_temp_c(SENSOR_CH_TEMP_BATT, SENSOR_NTC_BETA_BATT);
 
-    #undef PIN_V
+    /* Charge current + local bus voltage come from the INA2xx monitor at the shunt
+     * (battery or alternator side per ShuntAtBat) — NOT the internal ADC. */
+    out->amps        = ina2xx_current_a();
+    out->valt        = ina2xx_bus_v();   /* bus V at the shunt location */
+
+    out->rpm         = 0.0f;        /* from TIM2 stator capture (see STATOR_TIM) */
+    out->bms_charge_ok = true;      /* until CAN BMS wired */
 }
 
 /* DMA/ADC IRQ handlers to be routed from stm32f0xx_it.c as needed. */

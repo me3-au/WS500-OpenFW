@@ -122,11 +122,27 @@ numbers cross-checked against the STM32F072 datasheet AF table.
 | USB DM / DP | PA11 / PA12 | USB FS (fixed) | High |
 | Digital I/O (LED/enable/status/fault) | PC13, PC14, PC15, PA0, PA9, PA15, PB3, PB4, PB5, PB14, PC4, PC10 | GPIO in/out | Medium — pins seen in `MX_GPIO_Init`; individual functions not yet resolved |
 
-**The four analog channels (PA1/PA2/PA3/PC5) carry: battery voltage, alternator voltage,
-shunt-amplifier output (current), and temperature** — but *which pin is which* cannot be
-determined from the firmware alone. Resolve by tracing the board, or by injecting known
-voltages on each pin in an emulator/rig. (Note the WS500 also exposes alt + battery temp;
-one or both temp inputs may use additional analog channels or an I²C sensor — verify.)
+**Analog channel binding — RECOVERED FROM FIRMWARE** (measurement routine at
+`0x08014230`; conversion constants decoded from the per-slot scaling calls):
+
+| Slot | Pin | Conversion (fn) | Constants | Signal |
+|---|---|---|---|---|
+| 0 | PA1 | thermistor `0x800f050` | Beta **3950**, clamp −40…**160 °C** | NTC temp (alternator-class) |
+| 1 | PA2 | thermistor `0x800f050` | Beta **3950**, clamp −40…**160 °C** | NTC temp (alternator-class) |
+| 2 | PA3 | thermistor `0x800f050` | Beta **3380**, clamp −40…**140 °C** | NTC temp (battery-class) |
+| 3 | PC5 | linear `0x801003a` | Vref **3.3**, divider **34.33:1** (FS ≈ 113 V) | **Battery voltage** |
+
+The Beta values (3950 / 3380 are standard NTC part constants) and the −40/160/140 °C
+clamps make the signal *type* of each channel unambiguous. Which of PA1/PA2 is the primary
+alternator sensor vs. a second temp input is a harness detail (both are temperature).
+Scaled results are written to a measurement-global cluster at `0x200003D8..0x200003F4`.
+
+**Not on this ADC scan: shunt CURRENT and alternator VOLTAGE.** The WS500 must acquire
+current (500 A/50 mV shunt) and likely alternator voltage — but neither is among the four
+analog channels here. They therefore arrive via **CAN** (the config is heavily CAN-BMS/
+shunt oriented) and/or one of the two **I²C** buses (an external current-sense / ADC IC).
+Trace next: the CAN Rx handlers (PGN 127508 DC status, Victron/RV-C shunt) and the I²C1/
+I²C2 transaction sites.
 
 **ADC acquisition facts (confirmed from firmware):**
 - 7-channel scan, DMA to buffer `0x2000288C`, **oversampled ×4 and averaged**
@@ -134,17 +150,56 @@ one or both temp inputs may use additional analog channels or an I²C sensor —
 - Fixed ascending scan order fixes the buffer layout:
   `[0]=PA1(IN1) [1]=PA2(IN2) [2]=PA3(IN3) [3]=PC5(IN15)` (external signals),
   `[4]/[5]/[6]` = internal temp-sensor / VREFINT / VBAT (calibration).
-- Per-channel engineering-unit scaling (divider ratio → V, shunt ratio → A, thermistor
-  → °C) is reached through a pointer in the measurement struct, **not** by literal buffer
-  address — recovering it requires full decompilation of the measurement routine and
-  crosses into measurement logic. **Recommended instead:** bind each channel by injecting
-  a known voltage per pin (emulator or bench) and observing the reported value. Four
-  injections → unambiguous PA1/PA2/PA3/PC5 → signal map.
+- Per-channel engineering-unit scaling was **recovered by disassembly** of the measurement
+  routine at `0x08014230` (see the binding table above): PA1/PA2/PA3 are NTC temperatures
+  (Beta 3950/3950/3380), PC5 is battery voltage (34.33:1 divider). These scaling constants
+  are hardware facts (thermistor Beta, resistor-divider ratio).
 
 Field-drive note: TIM1_CH1 (PA8) is the natural main field PWM; the complementary
 CH3N (PB15) usage should be confirmed against the field-driver circuit (single-ended vs.
 half-bridge, P-type vs. N-type switching). TIM1's break input (BKIN) provides hardware
 over-current/fault cutoff of the field — worth replicating in new firmware.
+
+## 6c. External inputs — Product Manual harness pinout ↔ firmware
+
+Cross-referenced from the WS500 Product Manual (10.21.24) harness pinout (page 10) with
+the firmware acquisition paths. This is the authoritative physical-input list.
+
+| Wire (manual) | Signal | Digitized by | Notes |
+|---|---|---|---|
+| 4  Alternator Temp Sense | NTC thermistor | ADC PA1 or PA2 (Beta 3950, −40..160°C) | ATS |
+| 9  Battery Temp Sense | NTC thermistor | ADC PA3 (Beta 3380, −40..140°C) | BTS |
+| —  (regulator internal temp) | NTC thermistor | ADC — other of PA1/PA2 (Beta 3950) | inferred |
+| 11/10  Voltage Sense +/− | battery DC voltage | ADC PC5 (34.33:1 divider) | Kelvin sense |
+| 6  Power/Alt Positive | powers regulator + alt voltage | external monitor / derived | see below |
+| 12/13  Current Sense +/− (Purple/Grey) | shunt ±50 mV | **external, not internal ADC** | see below |
+| 8  Stator (Yellow) | AC frequency | **TIM2** input capture | RPM |
+| 1  Ignition / Enable | digital | GPIO | |
+| 3  Feature-In (White) | digital/config | GPIO | multi-function |
+| 2  Lamp / Feature-Out (Orange) | output | GPIO | |
+
+**Single current input — CONFIRMED: TI INA2xx current/power monitor on I²C @ 0x40.**
+There is exactly one shunt (500 A/50 mV), selectable at the battery or alternator via
+`$CCN ShuntAtBat`. Being a differential millivolt signal it is not readable by the
+single-ended STM32F072 ADC and is absent from the 7-channel scan; it is digitized by a
+**TI INA226 / INA228 / INA238** current-and-power monitor at **I²C 7-bit address 0x40**.
+
+Evidence (from disassembly): the I²C access functions read the INA register map at 0x40 —
+`0x00` CONFIG, `0x01` SHUNT_V (→ current), `0x02` BUS_V (→ local DC voltage), `0x03` POWER,
+`0xFF` DIE_ID; the firmware auto-detects the variant against die-IDs `0x2260` (INA226),
+`0x2280` (INA228), `0x2380` (INA238) and the `'TI'` (0x5449) manufacturer ID (register
+0xFE) — all present in a detection table in the image.
+
+Implication for the rebuild: the INA supplies **both charge current (shunt V) and the bus
+voltage at the shunt location** (battery or alternator side per ShuntAtBat) — which is why
+neither is on the internal ADC. Reuse a standard open INA2xx driver over I²C; set the
+calibration register from the configured shunt (500 A/50 mV default). A secondary I²C
+device cluster (7-bit 0x0C / 0x10 / 0x4C) also exists — likely other-variant peripherals
+(EEPROM / expander / aux sensor), not part of the core sensing chain.
+
+Non-ADC input handles (corrected): `0x20002910` = CAN, `0x200029A0` = TIM1 (field),
+`0x200029E0` = TIM2 (stator/RPM capture — reads CNT at [handle→0x24], diffs successive
+counts). Only `0x20002954` is I²C1.
 
 ## 7. Open items — needed to complete the hardware spec
 

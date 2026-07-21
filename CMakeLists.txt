@@ -11,6 +11,7 @@ set(APP_SRC
     Core/Src/board.c
     Core/Src/field_drive.c
     Core/Src/sensors.c
+    Core/Src/ina2xx.c
     Core/Src/regulator.c
     Core/Src/config_protocol.c
     Core/Src/can_n2k.c
