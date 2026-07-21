@@ -32,10 +32,9 @@ GPIOE is used. See `WS500_HARDWARE_SPEC.md` for the derivation of every item bel
 
 | Function | Status | What's needed |
 |---|---|---|
-| Digital inputs | 🟡 pins found: PA4, PA5, PB0, PB1 (read-once), PB13 (polled) | PA4/PA5/PB0/PB1 = battery-cap DIP switches (BC_Index); PB13 = Enable/Ignition or Feature-In |
-| Enable/Ignition vs Feature-In label | 🔴 | trace which input gates charging = Enable; the other = Feature-In |
-| Digital outputs | 🟡 pins found: PA0, PA9 (busiest), PA15, PB14 | Lamp/Feature-Out (wire 2) + status LEDs |
-| Lamp vs LED label | 🔴 | trace which output tracks fault/charge state |
+| Battery-capacity DIP switches | ✅ PA4, PA5, PA6 (+ PB0/PB1 likely) | confirmed — read in sequence & packed into a binary code (BC_Index) |
+| Control input PB13 | 🟡 confirmed input, polled, gates a branch | = Enable/Ignition **or** Feature-In; splitting the two reads control logic → bench |
+| Status outputs PA0/PA9/PA15/PB14 | 🟡 confirmed outputs, driven 0/1 by state | Lamp/Feature-Out (wire 2) + status LEDs; which is which → bench |
 | Aux timers TIM3 / TIM7 / TIM15-17 | 🟡 mostly a HAL clock-dispatch chain | confirm if any drives Feature-Out PWM / a tick; TIM7 likely a time base |
 | Secondary I²C devices 0x0C / 0x10 / 0x4C | 🔴 identity unknown | read their register access; candidates: EEPROM, GPIO/temp expander, variant sensor |
 | Config storage location | 🟡 internal flash likely (FLASH_IF used) | confirm flash page vs I²C EEPROM |

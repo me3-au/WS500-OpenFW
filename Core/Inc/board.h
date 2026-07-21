@@ -122,27 +122,25 @@
 #define USB_DM_PIN             GPIO_PIN_11
 #define USB_DP_PIN             GPIO_PIN_12
 
-/* ---- Digital I/O (from HAL_GPIO_ReadPin/WritePin call-site decode) --------- *
- * OUTPUTS (driven 0/1): PA0, PA9 (busiest), PA15, PB14
- *   -> Lamp / Feature-Out (manual wire 2) + status LED(s). Exact split: usage TODO.
- * INPUTS (read):        PA4, PA5, PB0, PB1 (read once) ; PB13 (polled)
- *   -> PA4/PA5/PB0/PB1 = battery-capacity DIP switches (schema BC_Index "0 = use
- *      DIP switches"); PB13 = Enable/Ignition or Feature-In (manual wires 1/3).
- * Also configured but static in MX_GPIO_Init: PC13-15, PB3-5, PC4, PC10.
- * Labels below are best-inference; confirm the exact function<->pin by tracing
- * each pin's usage (which gates charging = Enable, which drives the lamp, etc.). */
-#define DIP_PORT_A             GPIOA
-#define DIP_PINS_A             (GPIO_PIN_4 | GPIO_PIN_5)   /* battery-capacity DIP */
-#define DIP_PORT_B             GPIOB
-#define DIP_PINS_B             (GPIO_PIN_0 | GPIO_PIN_1)
-#define ENABLE_IN_PORT         GPIOB
-#define ENABLE_IN_PIN          GPIO_PIN_13  /* Enable/Ignition or Feature-In: confirm */
-#define OUT_PA0_PIN            GPIO_PIN_0   /* GPIOA - LED/feature-out: confirm */
-#define OUT_LAMP_PORT          GPIOA
-#define OUT_LAMP_PIN           GPIO_PIN_9   /* busiest output - Lamp/Feature-Out?: confirm */
-#define OUT_PA15_PIN           GPIO_PIN_15  /* GPIOA */
-#define OUT_PB14_PORT          GPIOB
-#define OUT_PB14_PIN           GPIO_PIN_14
+/* ---- Digital I/O (from HAL_GPIO_ReadPin/WritePin call-site + usage decode) -- *
+ * DIP SWITCHES (battery-capacity code) — CONFIRMED: PA4, PA5, PA6 are read in
+ *   sequence and packed into a binary value (bit0=PA4, bit1=PA5, bit2=PA6...);
+ *   this is the BC_Index DIP bank (schema: "0 = use DIP switches"). PB0/PB1 are
+ *   also read-once inputs — likely additional DIP bits (confirm).
+ * CONTROL INPUT: PB13 — polled, gates a control branch -> Enable/Ignition or
+ *   Feature-In (manual wire 1 / 3). Exact label needs control-logic trace/bench.
+ * STATUS OUTPUTS (driven 0/1 by state): PA0, PA9 (busiest), PA15, PB14 ->
+ *   Lamp/Feature-Out (manual wire 2) + status LED(s). Which is which: bench.
+ * Also static in MX_GPIO_Init: PC13-15, PB3-5, PC4, PC10.                        */
+#define DIP_PORT               GPIOA
+#define DIP_PINS               (GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_6)  /* batt-cap, PA4=LSB */
+#define DIP_EXTRA_PORT         GPIOB
+#define DIP_EXTRA_PINS         (GPIO_PIN_0 | GPIO_PIN_1)  /* likely more DIP bits */
+#define CTRL_IN_PORT           GPIOB
+#define CTRL_IN_PIN            GPIO_PIN_13  /* Enable/Ignition or Feature-In */
+#define STATUS_OUT_A_PINS      (GPIO_PIN_0 | GPIO_PIN_9 | GPIO_PIN_15) /* GPIOA LEDs/lamp */
+#define STATUS_OUT_B_PINS      (GPIO_PIN_14)                          /* GPIOB */
+#define OUT_LAMP_OR_LED_PIN    GPIO_PIN_9   /* GPIOA, busiest output */
 
 void board_init(void);        /* clocks + all peripheral GPIO/init */
 void board_clock_config(void);
