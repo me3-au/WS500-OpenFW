@@ -1,0 +1,27 @@
+WS500-OpenFW
+Copyright (C) 2026 WS500-OpenFW contributors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program.  If not, see <https://www.gnu.org/licenses/>.
+
+>> Replace this file with the full GPL-3.0 text (COPYING) from
+   https://www.gnu.org/licenses/gpl-3.0.txt before publishing.
+
+--------------------------------------------------------------------------------
+Third-party components (added separately, see Drivers/README.md):
+  - STM32Cube HAL / CMSIS ......... BSD-3-Clause (STMicroelectronics)
+  - ttlappalainen/NMEA2000 ........ MIT
+
+Provenance: the hardware interface (docs/WS500_HARDWARE_SPEC.md) was recovered by
+black-box analysis of the compiled stock firmware — interface fact only. This
+project contains none of the original Wakespeed firmware's control-logic source
+or expression. See docs/WS500_HARDWARE_SPEC.md for the full provenance note.
