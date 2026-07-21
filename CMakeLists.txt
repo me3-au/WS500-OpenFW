@@ -36,6 +36,8 @@ target_include_directories(${PROJECT_NAME}.elf PRIVATE
 )
 target_link_options(${PROJECT_NAME}.elf PRIVATE
     -T${LINKER_SCRIPT} -Wl,-Map=${PROJECT_NAME}.map,--cref)
+# libm's logf references __errno from libc; group them so single-pass ld resolves it
+target_link_libraries(${PROJECT_NAME}.elf PRIVATE -Wl,--start-group c m -Wl,--end-group)
 
 add_custom_command(TARGET ${PROJECT_NAME}.elf POST_BUILD
     COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${PROJECT_NAME}.elf> ${PROJECT_NAME}.bin
