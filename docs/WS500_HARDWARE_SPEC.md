@@ -58,8 +58,9 @@ binary — a rough proxy for how heavily it's used, not an exact usage map.
 | Peripheral | Refs | Likely role on the WS500 |
 |---|---|---|
 | **TIM1** (advanced timer) | 9 | **Alternator field-drive PWM.** TIM1 has complementary outputs + a break input (hardware fault shutdown) — the natural choice for the field MOSFET driver. *Role inferred; confirm via pin map.* |
-| TIM15 / TIM16 / TIM17 | 6 each | Additional PWM / timebase / input capture (candidate: stator tach / RPM capture). |
-| TIM2 / TIM3 / TIM7 | 1–2 | General-purpose timing, delays, scheduling. |
+| **TIM2** | 1 | **Stator tach / RPM capture** — confirmed (§6c; handle reads CNT and diffs successive counts for period). |
+| TIM15 / TIM16 / TIM17 | 6 each | High ref count is mostly a HAL clock-dispatch chain, not proven active I/O; possible aux PWM (e.g. Feature-Out) — confirm on bench. |
+| TIM3 / TIM7 | 1–2 | General-purpose timing / time base (TIM7 likely a tick). |
 | **ADC** (12-bit) | 2 | **Analog sensing:** battery voltage, alternator voltage, shunt-amp output (current), alt & battery temperature. Channel→signal mapping TBD. |
 | **bxCAN** | 2 | CAN bus — RV-C / NMEA2000 / J1939 / Victron. |
 | **USB_FS** + **CRS** | 2 + 1 | USB CDC **virtual COM port** (config channel; string "WS500 Virtual ComPort"). Crystal-less via CRS/HSI48. |

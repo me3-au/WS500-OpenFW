@@ -3,8 +3,10 @@
 Status of the reverse-engineered hardware I/O. Confidence: ✅ confirmed from firmware ·
 🟡 partial / inferred · 🔴 not yet determined · 🔵 needs board/schematic (not in firmware).
 
-MCU: **STM32F072xB** (Cortex-M0, 128 KB/16 KB, HSI48+CRS). Package likely 100-pin (VB) —
-GPIOE is used. See `WS500_HARDWARE_SPEC.md` for the derivation of every item below.
+MCU: **STM32F072xB** (Cortex-M0, 128 KB/16 KB, HSI48+CRS). Package **TBD** (confirm from
+board): GPIOD/GPIOE base addresses are referenced in init code, which would imply a ≥64/100-
+pin part, but no GPIOD/GPIOE *pin function* is actually mapped (highest mapped port is GPIOC).
+See `WS500_HARDWARE_SPEC.md` for the derivation of every item below.
 
 ## Confirmed I/O ✅
 

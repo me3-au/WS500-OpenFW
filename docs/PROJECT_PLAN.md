@@ -1,106 +1,199 @@
 # WS500-OpenFW — Project Plan
 
-Status legend: ✅ exists · 🔨 in progress · ⬜ not started
+Status legend: ✅ done · 🔨 in progress · ⬜ not started · 🧩 decision needed
 
-This is the master tracking doc until the repo is pushed to GitHub, at which point
-each ⬜/🔨 line becomes a GitHub Issue and the milestones below become GitHub Milestones.
+Repo is **public** at `github.com/me3-au/WS500-OpenFW` (personal account `me3-au`). This
+doc is the master tracker; the deliverables/milestones below should now be mirrored as
+**GitHub Issues + Milestones** (the repo is already pushed — do this now, not "after push").
+
+**Authoritative design direction:** the **two-stage LFP** model in
+[`CONTROL_SPEC_NEXTGEN.md`](CONTROL_SPEC_NEXTGEN.md) (Draft B) **supersedes** the older
+multi-stage Pb model still encoded in `Core/Inc/regulator.h` / `Core/Src/regulator.c`.
+That code is **legacy** and is scheduled for rewrite in **M2.5** (below). Where this plan and
+the old code interface disagree, the spec wins.
+
+**Design philosophy — know the history, don't keep it in code.** The GPL VSR source and the
+reverse-engineered WS500 binary are **reference and validation only**: they establish legal
+footing, explain the hardware, and let us cross-check facts. They are **not** a codebase to
+port. The firmware is a **clean-slate, modern implementation** — we deliberately **ditch the
+legacy surface** (6-stage Pb machine, absorption stage, DIP switches, small-alt/half modes,
+RFM/PBF/Feature-IN RPM conflicts, 12 V / 500 Ah normalization) and adopt smarter methods
+(two-stage CHARGE/REST, per-cell V, single watts arbitration, named LFP profiles). No legacy
+concept is carried forward "because that's how it was done." History informs; it does not
+constrain the code.
 
 ---
 
+## 0. Document map (the design corpus)
+
+| Doc | Purpose | Status |
+|---|---|---|
+| `PROJECT_PLAN.md` (this) | Tracker → GitHub Issues/Milestones | 🔨 |
+| `WS500_HARDWARE_SPEC.md` | Reverse-engineered hardware facts (MCU, pin map, sensors) | ✅ (few open items §7) |
+| `IO_COVERAGE.md` | Per-pin I/O completeness map | ✅ |
+| `CONTROL_SPEC_NEXTGEN.md` | **Authoritative** control architecture (2-stage LFP, watts arbitration) | 🔨 Draft B |
+| `PROFILE_SPEC_LFP.md` | Charge-profile engine: state machine, params, JSON schema | 🔨 Draft 1 (8 open Qs §8) |
+| `FLASH_AND_RECOVERY.md` | Backup/rollback/update procedures | ⬜ (constraints in §3 here, to extract) |
+| `SAFETY.md` | Bench-safety rules | ⬜ (rules in §5 here, to extract) |
+| `test-fw/README.md` | Bring-up test firmware spec | ⬜ (spec in §4 here, to extract) |
+| `CAN_TECHNICAL_SPEC.md` / `CAN_USER_GUIDE.md` / `USER_GUIDE.md` / `TEST_PLAN.md` | see deliverables | ⬜ |
+
+> The old plan named a single `SOFTWARE_DESIGN_SPEC.md` that was never written; that role is
+> filled by `CONTROL_SPEC_NEXTGEN.md` + `PROFILE_SPEC_LFP.md`. Remaining design gaps to fold
+> into those two: **fault-code bit enumeration**, **field PWM frequency**, and **inner
+> control-loop numerics (PI gains, loop rate)** — none specified anywhere yet.
+
+## 0.5 Prior art / upstream — the GPL-3.0 ancestor (important)
+
+The WS500 is the **4th-generation commercial evolution of Al (William A.) Thomason's
+open-source VSR "Very Smart Regulator."** Generations 1–3 are **published open source**;
+gen-4 (WS500) is the closed commercial port. This materially de-risks the project:
+
+- **Software: GPL-3.0** (2016–2018, © William A. Thomason). Full control stack is public —
+  `Alternator.cpp` (regulation state machine), `CPE.cpp` (charge-profile entries → the
+  `$CPx` model), `Sensors.cpp` (INA226 + NTC), `OSEnergy_Serial.cpp` (the `$` config
+  protocol), `OSEnergy_CAN.cpp`. Repos: `Open-Source-Alternator-Regulator/alt-Source`,
+  `AlternatorRegulator/VSR-Source`. Cloned to `../VSR-upstream/` (reference; not committed).
+- **Hardware: CC BY-SA 4.0** (`alt-CAD`) + the [hardware design overview](https://arduinoalternatorregulator.blogspot.com/2010/06/hardware-design-overview.html),
+  which **resolves several of our board-only open items**: field drive = two N-ch FETs +
+  floating boost-driver (HIGH/LOW = P/N-type via jumpers) + charge pump, PWM-driven; sensing
+  = INA-282 shunt amp → INA-226 (gen-3), which the WS500 modernized to a single
+  INA226/228/238 at the shunt (matches our finding); NTC 10 K battery/alt temps; temp-comp
+  `setPointVolts += (77 - batTemp) × 0.0168` (°F). Gen-3 MCU = **ATmega64M1** (8-bit AVR),
+  not the WS500's STM32F072 — so **algorithms port, low-level peripheral code does not.**
+- **Pre-2015 releases were CC BY-NC-SA (non-commercial) — do not use those**; only the
+  2015+ GPL-3.0 / CC BY-SA 4.0 material is safe for a project that may see commercial use.
+
+**Consequence for the clean-room posture:** the control logic we deliberately avoided reading
+out of the WS500 binary has a **GPL-3.0 open ancestor** — so the legal footing is settled.
+But per the design philosophy above, we **do not port it.** The GPL source is **reference and
+cross-check** (how the hardware is driven, proven algorithm shapes, validation of our RE
+findings); the STM32 reverse-engineering is the source of truth for the *hardware interface*.
+The control code itself is written **fresh** to the two-stage LFP spec — no AVR code, no
+legacy structure, carried across. **If any GPL VSR code *is* ever reused verbatim, attribution
+to William A. Thomason and GPL headers are mandatory** (deliverable #16); a clean fresh
+implementation informed by open references is cleaner still. This grants no rights to the
+WS500's proprietary STM32 firmware — and we don't need it.
+
 ## 1. Deliverables map
 
-| # | Deliverable | Artifact | Status |
-|---|-------------|----------|--------|
-| 1 | Project management | This doc → GitHub Issues + Milestones after push | 🔨 |
-| 2 | Git hosting | Local repo exists; needs GitHub remote — **public from day one** (decided) | 🔨 |
-| 3 | HW documentation | `docs/WS500_HARDWARE_SPEC.md` (open items in its §7) | ✅/🔨 |
-| 4 | Software Design Spec | `docs/SOFTWARE_DESIGN_SPEC.md` — architecture, regulator state machine, charge profiles, fault model | ⬜ |
-| 5 | OS firmware | `Core/` skeleton; needs HAL vendored, sensors bound, regulator implemented | 🔨 |
-| 6 | Config files | Stock-compatible `$` ASCII protocol (`config_protocol.c`) + flash-page config store | 🔨 |
-| 7 | Update / rollback / backup / recovery | `docs/FLASH_AND_RECOVERY.md` + procedures below (§3) | ⬜ |
-| 8 | Client app (read/write config + FW) | `tools/ws500ctl/` Python CLI over USB CDC; GUI later if wanted | ⬜ |
-| 9 | CAN integration — technical spec | `docs/CAN_TECHNICAL_SPEC.md` — PGN set, RBM/DC-source behavior, addressing | ⬜ |
-| 10 | CAN integration — user doc | `docs/CAN_USER_GUIDE.md` | ⬜ |
-| 11 | User documentation | `docs/USER_GUIDE.md` (install, config, LED codes, troubleshooting) | ⬜ |
-| 12 | Testing + bug tracking | `docs/TEST_PLAN.md` + GitHub Issues; Renode emulation + bench HIL | ⬜ |
-| 13 | Bring-up / IO-confirm test firmware | `test-fw/` build target (see §4) — also solves the ADC channel-binding task | ⬜ |
-| 14 | Bench safety — don't kill the test unit | §5 below; gates every hardware milestone | ⬜ |
+| # | Deliverable | Artifact | Milestone | Status |
+|---|-------------|----------|-----------|--------|
+| 1 | Project management | this doc → GitHub Issues/Milestones | M0 | 🔨 |
+| 2 | Git hosting | remote exists, public | M0 | ✅ |
+| 3 | HW documentation | `WS500_HARDWARE_SPEC.md`, `IO_COVERAGE.md` | M0–M2 | ✅ (open items) |
+| 4 | Control/design spec | `CONTROL_SPEC_NEXTGEN.md` + `PROFILE_SPEC_LFP.md` (+ fault codes, loop numerics); **cross-referenced against the GPL VSR source (§0.5)** | M2.5–M3 | 🔨 |
+| 5 | OS firmware | `Core/` (board/field/main real; sensors/regulator/ina/config/can stub) | M2–M3 | 🔨 |
+| 6 | Config protocol + store | `config_protocol.c` + flash-page store | M4 | 🔨 / 🧩 (see #6a) |
+| 6a | **Config strategy decision** | stock `$`-compatible vs new JSON profile schema (they conflict) | M2/M3 | 🧩 |
+| 7 | Update/rollback/backup/recovery | `FLASH_AND_RECOVERY.md` (+ §3) | M1 | ⬜ |
+| 8 | Client app | `tools/ws500ctl/` (USB CDC CLI) | M4 | ⬜ |
+| 9 | CAN Rx for control | BMS charge-permission/current in (feeds the loop) | M3 | ⬜ |
+| 10 | CAN Tx telemetry + RBM | status PGNs, regulator sync + `CAN_TECHNICAL_SPEC.md` | M5 | ⬜ |
+| 11 | CAN user doc | `CAN_USER_GUIDE.md` | M5 | ⬜ |
+| 12 | User documentation | `USER_GUIDE.md` (install, config, LED codes, troubleshooting) | M6 | ⬜ |
+| 13 | Testing + bug tracking | `TEST_PLAN.md`; Renode emulation + bench HIL; GitHub Issues | M0→M6 | ⬜ |
+| 14 | Bring-up test firmware | `test-fw/` (§4). *ADC binding already recovered — this confirms scaling on bench* | M2 | ⬜ |
+| 15 | Bench safety | `SAFETY.md` (§5); gates every hardware milestone | all HW | 🔨 |
+| 16 | **License + third-party NOTICE** | full GPL-3.0 text (LICENSE is a placeholder); NOTICE for HAL (BSD-3) / NMEA2000 (MIT); **attribution to William A. Thomason + GPL headers preserved on any reused VSR code (§0.5); CC BY-SA 4.0 attribution for reused hardware** | **M0 (now)** | ⬜ |
+| 17 | **OSS hygiene** | `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue/PR templates, README badges | M0 | ⬜ |
+| 18 | **Versioning + release** | `VERSION`/macro, `CHANGELOG.md`, tag/release flow | M0→M6 | ⬜ |
+| 19 | **Emulation harness** | Renode model (STM32F072 + peripherals + INA stub) for hardware-free dev/CI | M0→M1 | ⬜ |
+| 20 | **Telemetry / logging** | log stream over USB CDC / CAN (per `CONTROL_SPEC`) | M4–M5 | ⬜ |
 
-## 2. Milestones (order is deliberate — safety and recovery come before any flash write)
+## 2. Milestones (safety and recovery come before any flash write)
 
-- **M0 — Infrastructure.** GitHub remote, CI build (arm-none-eabi via GitHub Actions),
-  vendor STM32CubeF0 HAL, repo builds clean. Convert this table to Issues.
-- **M1 — Backup & recovery proven.** Verified stock-image backup, documented restore,
-  SWD wired, DFU entry/exit rehearsed. **No custom firmware is flashed before M1 passes.**
-- **M2 — Bring-up firmware.** `test-fw` confirms every IO (§4); ADC channel binding
-  resolved; `SENSOR_CH_*` filled in `board.h`.
-- **M3 — Core firmware.** Sensors scaled, field PWM into dummy load, regulator state
-  machine + first charge profile, watchdog, fault/break path tested.
-- **M4 — Config + client app.** `$` protocol round-trip, flash config store,
-  `ws500ctl` read/write/verify, firmware update via CLI.
-- **M5 — CAN/NMEA2000.** PGN transmit set, RBM participation, tech spec + user doc.
-- **M6 — Real-alternator trials + docs.** Staged live testing (§5 exit criteria),
-  user guide, tagged release.
+Each milestone lists **exit criteria**. `→` marks a hard gate.
 
-## 3. Firmware update / rollback / backup / recovery (design constraints)
+- **M0 — Infrastructure** *(mostly done)*.
+  Done: public remote ✅, CI (`.github/workflows/build.yml`) ✅, HAL vendoring
+  (`scripts/fetch_deps.sh`) ✅, `stm32f0xx_hal_conf.h` ✅.
+  Remaining: **license + NOTICE (#16)**, OSS hygiene (#17), versioning scaffold (#18),
+  convert this table to Issues/Milestones, **stand up the Renode emulation harness (#19)**.
+  *Exit:* repo builds green in CI; full GPL text in place; issues created; emulator runs the
+  built ELF far enough to exercise `main()`.
+- **M1 — Backup & recovery proven** → *no custom firmware is flashed before this passes.*
+  Verified stock-image backup, documented+rehearsed DFU restore, SWD permanently wired,
+  BOOT0/DFU entry-exit rehearsed. *Exit:* stock image demonstrably restores the unit via DFU
+  on the bench; `FLASH_AND_RECOVERY.md` written.
+- **M2 — Bring-up firmware** (`test-fw`, §4). Confirm every I/O on the bench; **bench-confirm
+  ADC scaling** (binding is already recovered); resolve the two label unknowns (PB13 =
+  Enable vs Feature-In; which output = Lamp vs LED); identify the 0x0C/0x10/0x4C I²C devices;
+  confirm package + field-driver topology. *Exit:* `board.h` constants bench-verified; I/O
+  coverage all ✅.
+- **M2.5 — Control-model reconciliation** → *gates M3.* Rewrite `regulator.h/.c` to the
+  two-stage LFP spec: delete `REG_ABSORPTION`, `temp_comp_per_c`, `sys_voltage 12/24/36/48`;
+  adopt CHARGE/REST + V/cell + watts arbitration; model single-shunt `valt` (bus voltage at
+  battery *or* alternator side, not always-present). Resolve **#6a config strategy**.
+  *Exit:* the interface compiles against the spec's model; no legacy multi-stage surface
+  remains; decision #6a recorded.
+- **M3 — Core firmware.** Implement the two-stage engine + one named LFP profile; scale
+  sensors; working INA2xx driver; field PWM into a **dummy load**; watchdog; fault/break path
+  tested; **CAN Rx for control (#9)** (BMS charge permission/current). *Exit:* closed-loop CV
+  hold on the bench supply into a dummy load, with fault cutoff verified.
+- **M4 — Config + client app.** Config schema (per #6a), flash config store (CRC+version),
+  `ws500ctl` read/write/verify, FW update via CLI, telemetry stream (#20). *Exit:* config
+  round-trips; FW updates via `ws500ctl`; config survives an update.
+- **M5 — CAN Tx / NMEA2000.** Status PGN set, RBM participation, `CAN_TECHNICAL_SPEC.md` +
+  user doc. *Exit:* regulator telemeters valid PGNs and participates in RBM on a real bus.
+- **M6 — Real-alternator trials + release.** Staged live testing per §5 exit ladder; user
+  guide; **versioned tagged release** with CHANGELOG. *Exit:* driven alternator charges a
+  bank under supervision; `v0.1.0` tagged.
 
-**Chip facts that shape this:** STM32F072xB = 128 KB single-bank flash. No dual-bank,
-so a true A/B slot scheme costs half the flash — not worth it. Instead:
+## 3. Risk register
 
-- **Unbrickable floor:** the ST **system bootloader in ROM** (DFU over USB) cannot be
-  erased. Worst case is always recoverable if we can force system-memory boot
-  (BOOT0 pad or empty-flash boot). Locate/verify the BOOT0 access point on the board — HW spec §7 open item.
-- **Backup first:** full flash readout of the stock unit via SWD **before anything else**.
-  ⚠️ If RDP (readout protection) level ≥1 is set, readout is blocked and disabling RDP
-  mass-erases the chip — in that case the stock DFU image file we already have *is* the
-  backup; verify it restores on the bench before relying on it.
-- **Rollback = restore stock image via DFU.** Documented, rehearsed procedure in
-  `docs/FLASH_AND_RECOVERY.md`.
-- **Update path:** stock ROM DFU for now (`dfu-util`), driven by `ws500ctl` for a
-  one-command experience. A tiny custom bootloader (CRC-checked app, config-preserving
-  update over CDC) is a *later* nice-to-have, not a dependency.
-- **Config survives updates:** config lives in the last flash page(s), outside the app
-  image region, with CRC + version; `ws500ctl` can export/import as a text file.
-- **No flash protections, ever (decided):** the new firmware never sets RDP (readout
-  protection) or WRP (write protection) option bytes. The chip stays fully readable
-  and reflashable via SWD and DFU at all times — recovery is never locked out, and
-  anyone can dump/verify what's running. (This is about *our* firmware; the *stock*
-  unit may still ship with RDP set, which only affects the backup step above.)
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Brick the only unit | project-ending (no spare) | M1 gate: proven DFU restore before first flash; SWD wired; ROM DFU is unerasable |
+| Wrong INA2xx scaling → bad current | unsafe charging | bench-verify against a reference meter (M2/M3); emulation cross-check |
+| Field-driver damage | hardware loss | dummy load, 20 % duty cap in test builds, TIM1 BKIN cutoff, current-limited supply (§5) |
+| License non-compliance (public + placeholder LICENSE) | legal/OSS | **#16 in M0, immediate** |
+| Single irreplaceable unit | any HW test is high-stakes | emulation-first (#19); dry-run risky tests in Renode; golden stock image |
+| Control-model drift (code vs spec) | rework, bugs | M2.5 reconciliation; spec is single source of truth |
+| Draft specs with open questions | design churn | track `PROFILE_SPEC` §8 questions as issues; resolve before M3 coding they touch |
 
-## 4. Bring-up test firmware (`test-fw`)
+---
+
+## 4. Bring-up test firmware (`test-fw`) — *to extract to `test-fw/README.md`*
 
 Separate small build target sharing `board.c`. Interactive over USB CDC:
-
-- LED / GPIO walk (confirm pin map visually)
-- Live ADC dump of all 7 channels (drives the signal-injection channel binding)
-- Field PWM at commanded duty **with hard 20 % cap** compiled in, dummy load only
+- LED / GPIO walk (confirm pin map + resolve Enable-vs-Feature-In, Lamp-vs-LED labels)
+- Live ADC dump of all 7 channels (bench-confirm the recovered scaling)
+- Field PWM at commanded duty **with a hard 20 % cap compiled in**, dummy load only
 - TIM1 break-input test (assert fault line → verify PWM hard-stops)
 - CAN loopback + external echo test
-- I²C bus scan (finds the INA2xx / temp sensors)
+- I²C bus scan (confirm INA2xx @ 0x40; identify 0x0C/0x10/0x4C)
 
-Everything it proves feeds directly into `board.h` constants and the HW spec.
+Everything it proves feeds `board.h` constants and the HW spec.
 
-## 5. Bench safety — protecting the test WS500
+## 5. Bench safety — *to extract to `SAFETY.md`* — protecting the one WS500
 
 Rules, in force until explicitly retired:
+1. **Current-limited bench supply** (13.2 V, start ≤1 A) — never a raw battery for bring-up.
+2. **Dummy field load** — power resistor (~10 Ω, ≥50 W) until the loop + fault paths are proven.
+3. **Fail-safe defaults** — firmware ships field-OFF; watchdog on; TIM1 break verified in M2.
+4. **Duty-cycle cap compiled into test builds** (20 %).
+5. **Never spin a real alternator without a battery connected** (load dump). Real-alternator
+   work starts only in M6: dummy load → field coil on dead alternator → driven alternator on
+   a battery bank with supervision.
+6. **Recovery always one step away** — SWD permanently wired; stock restore rehearsed (M1).
+7. **Exactly one WS500 exists — irreplaceable.** M1 (backup + rehearsed restore) is absolute;
+   any test that could plausibly *damage* (not just brick) hardware gets a Renode dry run first.
 
-1. **Current-limited bench supply** (13.2 V, start ≤1 A limit) — never a raw battery
-   for early bring-up. A battery can source hundreds of amps into a fault.
-2. **Dummy field load** — power resistor (~10 Ω, ≥50 W) in place of a real alternator
-   field until the control loop and fault paths are proven. A real field coil is
-   inductive and unforgiving.
-3. **Fail-safe defaults** — firmware ships field-OFF; watchdog enabled; TIM1 break
-   (hardware fault cutoff) verified in M2 before any closed-loop work.
-4. **Duty-cycle cap compiled into test builds** (20 %) so no software bug can command
-   full field on the bench.
-5. **Never spin a real alternator without a battery connected** (load dump kills
-   diodes/regulator). Real-alternator work starts only in M6, with staged exit
-   criteria: dummy load → field coil on dead alternator → driven alternator on
-   battery bank with supervision.
-6. **Recovery always one step away** — SWD permanently wired to the bench unit; stock
-   image restore rehearsed (M1) before first custom flash.
-7. **There is exactly one WS500 unit — it is irreplaceable.** No golden spare exists,
-   so M1 (backup + rehearsed restore) is absolute: the stock image must be proven to
-   restore via DFU *before* the first custom flash, SWD stays permanently wired, and
-   any test that could plausibly damage hardware (not just brick it) gets a dry run
-   in emulation first.
+## 6. Flash / update / rollback / backup / recovery — *to extract to `FLASH_AND_RECOVERY.md`*
+
+**Chip facts:** STM32F072xB = 128 KB single-bank flash → no A/B slots (not worth halving flash).
+- **Unbrickable floor:** the ST **system DFU bootloader in ROM** can't be erased. Force
+  system-memory boot via the **BOOT0 access point** (locate/verify on the board — open item in
+  [`IO_COVERAGE.md`](IO_COVERAGE.md), "needs board/schematic").
+- **Backup first:** full SWD flash readout of the stock unit before anything. ⚠️ If RDP ≥1 is
+  set, readout is blocked and disabling it mass-erases — then the stock DFU image file we
+  already hold *is* the backup; prove it restores before relying on it.
+- **Rollback = restore stock image via DFU** (rehearsed procedure).
+- **Update path:** stock ROM DFU (`dfu-util`), driven by `ws500ctl`. A CRC-checked,
+  config-preserving custom bootloader is a *later* nice-to-have, not a dependency.
+- **Config survives updates:** last flash page(s), outside the app image, CRC + version;
+  `ws500ctl` exports/imports as text.
+- **No flash protections, ever (decided):** our firmware never sets RDP or WRP. The chip stays
+  fully readable/reflashable via SWD and DFU — recovery is never locked out. (The *stock* unit
+  may still ship with RDP set, affecting only the backup step above.)
