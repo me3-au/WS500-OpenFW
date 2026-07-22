@@ -28,6 +28,8 @@ void config_init(void)
     s_g.warmup_time_s     = 30;
     s_g.warmup_coolant_c  = NAN;
     s_g.soc_target_pct    = -1;
+    s_g.skip_bulk_vcell   = 0.0f;   /* off by default (enable to skip absorb when full) */
+    s_g.skip_bulk_soc_pct = -1;     /* off */
     s_g.rotor_rated_v     = 12.0f;
     s_g.rotor_v_max       = NAN;
     s_g.allow_full_field_48v = false;

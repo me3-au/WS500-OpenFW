@@ -82,6 +82,12 @@ behavior. Switching profiles never adds states.
   and a **duration backstop**. Tail current is an optimization, not a requirement.
 - **Revert (REST → CHARGE):** voltage sags below a per-cell threshold (held), or SOC
   drops, or a net amount of Ah has been drawn. Hold-times prevent flapping.
+- **Skip re-charge on startup (optional).** If the battery is already full when the engine
+  starts — e.g. a bank floating on solar — the regulator can **skip CHARGE and go straight
+  to REST** instead of re-absorbing on every power cycle. Two independent triggers, off by
+  default: by **resting voltage** ("skip if V/cell ≥ your solar-float setting") and/or by
+  **SoC** ("skip if trusted SoC ≥ y %"). Evaluated once at start, on the resting voltage
+  before any field is applied.
 
 ## 5. The ceilings, explained
 

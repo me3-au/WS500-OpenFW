@@ -170,6 +170,12 @@ typedef struct {
     uint16_t warmup_time_s;
     float   warmup_coolant_c;   /* NAN = disabled */
     int8_t  soc_target_pct;     /* -1 = disabled */
+
+    /* Skip BULK on startup if the battery is already full — avoids re-absorbing on
+     * every power cycle (e.g. a bank floating on solar). Evaluated once at first
+     * activation, on the resting voltage before field is applied. */
+    float   skip_bulk_vcell;    /* start in REST if resting V/cell ≥ this; 0 = off */
+    int8_t  skip_bulk_soc_pct;  /* start in REST if trusted SOC ≥ this %; ≤0 = off */
     float   rotor_rated_v;      /* default 12 on 48V systems (§5.1) */
     float   rotor_v_max;        /* NAN = use rated; override ladder */
     bool    allow_full_field_48v;

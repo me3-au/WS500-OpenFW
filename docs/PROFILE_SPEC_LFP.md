@@ -96,6 +96,14 @@ battery-truth current is available (tiers 1–2); it is no longer required. Rati
 current is "optimal" but placement-sensitive and fussy; voltage + time is adequate and
 universal. (A smarter tail/SOC-blended exit can come later.)
 
+**T1 skip-BULK-if-full (added, optional).** At first activation (power-up), if the battery
+is already full the regulator goes **straight to REST**, not BULK — avoiding a needless
+re-absorb on every power cycle (common with a bank floating on solar). Two independent,
+off-by-default triggers, evaluated once on the resting voltage before field is applied:
+`skip_bulk_vcell` (start in REST if resting V/cell ≥ this — set to the solar-float voltage)
+and `skip_bulk_soc_pct` (start in REST if trusted SOC ≥ this). If the profile is zero-rest,
+"REST" is STANDBY-rest; otherwise FLOAT. Normal REST→BULK reverts (T3) are unaffected.
+
 Anti-flap guarantee: T2 and T3 hold times plus §5 damping make BULK↔FLOAT
 oscillation impossible faster than `t_tail_hold_s + t_revert_hold_s`
 (worst case minutes, not seconds).

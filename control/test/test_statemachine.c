@@ -20,6 +20,8 @@ static ctrl_globals_t G(void)
     g.warmup_time_s = 0;                /* no warmup delay in tests */
     g.warmup_coolant_c = NAN;
     g.soc_target_pct = -1;
+    g.skip_bulk_vcell = 0.0f;           /* off by default; enabled per-case */
+    g.skip_bulk_soc_pct = -1;
     g.rotor_rated_v = 12.0f;
     g.rotor_v_max = NAN;
     g.allow_full_field_48v = false;
@@ -186,5 +188,33 @@ void test_statemachine(void)
         ctrl_command_t cmd = {0};
         for (int i = 0; i < 70; i++) cmd = ctrl_tick(&e, &m, &c, &p, &gt, 1000); /* >60 s at CV */
         CHECK(cmd.state == CTRL_FLOAT);
+    }
+
+    /* 11) Skip-bulk-if-full (voltage): resting above skip threshold on startup →
+     *     start in FLOAT, not BULK (no re-absorb every power cycle). */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_globals_t gs = G(); gs.skip_bulk_vcell = 3.375f;    /* ~solar float */
+        ctrl_measured_t full = M(3.40f);          /* resting above threshold */
+        ctrl_command_t cmd = ctrl_tick(&e, &full, &c, &p, &gs, 100);
+        CHECK(cmd.state == CTRL_FLOAT);
+        ctrl_t e2; ctrl_init(&e2);
+        ctrl_measured_t low = M(3.30f);           /* below → needs charge */
+        ctrl_command_t cmd2 = ctrl_tick(&e2, &low, &c, &p, &gs, 100);
+        CHECK(cmd2.state == CTRL_BULK);
+    }
+
+    /* 12) Skip-bulk-if-full (SoC): trusted SOC over threshold → start in FLOAT;
+     *     untrusted SOC must NOT skip. */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_globals_t gs = G(); gs.skip_bulk_soc_pct = 95;
+        ctrl_measured_t m = M(3.35f); m.soc_pct = 98.0f; m.soc_trusted = true;
+        ctrl_command_t cmd = ctrl_tick(&e, &m, &c, &p, &gs, 100);
+        CHECK(cmd.state == CTRL_FLOAT);
+        ctrl_t e2; ctrl_init(&e2);
+        ctrl_measured_t m2 = M(3.35f); m2.soc_pct = 98.0f; m2.soc_trusted = false;
+        ctrl_command_t cmd2 = ctrl_tick(&e2, &m2, &c, &p, &gs, 100);
+        CHECK(cmd2.state == CTRL_BULK);
     }
 }

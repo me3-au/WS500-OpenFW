@@ -72,6 +72,18 @@ static bool revert_met(ctrl_t *c, const ctrl_measured_t *m,
     return met;
 }
 
+/* Skip-BULK-if-full test at first activation: battery already charged (resting
+ * voltage or trusted SOC) → go straight to REST instead of re-absorbing. */
+static bool skip_bulk_if_full(const ctrl_t *c, const ctrl_measured_t *m, const ctrl_globals_t *g)
+{
+    const uint8_t cells = g->cells_series ? g->cells_series : 1;
+    if (g->skip_bulk_vcell > 0.0f && !isnan(c->v_ctrl_f) &&
+        c->v_ctrl_f / (float)cells >= g->skip_bulk_vcell) return true;
+    if (g->skip_bulk_soc_pct > 0 && m->soc_trusted &&
+        m->soc_pct >= (float)g->skip_bulk_soc_pct) return true;
+    return false;
+}
+
 void ctrl_init(ctrl_t *c)
 {
     c->state = CTRL_STANDBY;
@@ -142,8 +154,14 @@ ctrl_command_t ctrl_tick(ctrl_t *c,
             }
             if (c->standby_reason == CTRL_SB_WARMUP) {              /* T1 warmup gate */
                 c->warmup_ms += dt_ms;
-                if (g->warmup_time_s == 0 || c->warmup_ms >= (uint32_t)g->warmup_time_s * 1000u)
-                    enter(c, CTRL_BULK, CTRL_SB_OFF);
+                if (g->warmup_time_s == 0 || c->warmup_ms >= (uint32_t)g->warmup_time_s * 1000u) {
+                    if (skip_bulk_if_full(c, m, g)) {              /* already full → skip BULK */
+                        if (prof->rest_mode == CTRL_REST_ZERO) enter(c, CTRL_STANDBY, CTRL_SB_REST);
+                        else                                   enter(c, CTRL_FLOAT, CTRL_SB_OFF);
+                    } else {
+                        enter(c, CTRL_BULK, CTRL_SB_OFF);
+                    }
+                }
             } else if (c->standby_reason == CTRL_SB_REST) {         /* T3 revert from zero-rest */
                 if (revert_met(c, m, prof, g, dt_ms)) enter(c, CTRL_BULK, CTRL_SB_OFF);
             }
