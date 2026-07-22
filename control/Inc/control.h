@@ -170,6 +170,16 @@ typedef struct {
     bool    allow_full_field_48v;
 } ctrl_globals_t;
 
+/* ---- Hardware limit set (CONTROL_SPEC §2.1), native units ----------------- *
+ * Static ratings of the installed system; converted to Watts each cycle at the
+ * present voltage. <= 0 = unset (drops out of the arbitration min()). Belt is
+ * RPM-dependent and handled by the RPM subsystem, not here. */
+typedef struct {
+    float battery_c_limit;    /* C-rate (× bank Ah × V → W) */
+    float wiring_limit_a;     /* charge-path ampacity (A → W) */
+    float alternator_limit_a; /* absolute rectifier/stator cap (A → W) */
+} ctrl_limits_t;
+
 /* ---- Engine command output ------------------------------------------------ */
 typedef struct {
     float          field_effort;   /* commanded e ∈ [0,1] = duty/duty_max (§5.1) */
