@@ -10,6 +10,8 @@
 
 static ctrl_globals_t s_g;
 static ctrl_profile_t s_prof;
+static ctrl_limits_t  s_lim;
+static ctrl_thermal_cfg_t s_th;
 
 void config_init(void)
 {
@@ -42,8 +44,23 @@ void config_init(void)
     s_prof.t_revert_hold_s   = 30;
     s_prof.soc_revert_pct    = 50;
     s_prof.ah_revert         = 30.0f;  /* 0.30 C of 100 Ah */
+
+    /* Hardware limit set (CONTROL_SPEC §2.1) — placeholders, commissioned per install. */
+    s_lim.battery_c_limit    = 0.5f;   /* 0.5 C default LFP */
+    s_lim.wiring_limit_a     = 0.0f;   /* unset */
+    s_lim.alternator_limit_a = 0.0f;   /* unset */
+
+    /* Thermal governor (§4) — placeholders; mount/commissioning refine these. */
+    s_th.tau_s          = 300.0f;
+    s_th.target_c       = 95.0f;
+    s_th.hard_c         = 110.0f;
+    s_th.derate_floor_w = 100.0f;
+    s_th.ceiling_max_w  = 100000.0f;   /* effectively unbound until temp climbs */
+    s_th.gain_w_per_c_s = 50.0f;
 }
 
 void config_poll(void) { /* TODO: USB CDC lines → parse/validate/apply. */ }
 
 void config_get(ctrl_globals_t *g, ctrl_profile_t *prof) { *g = s_g; *prof = s_prof; }
+void config_get_limits(ctrl_limits_t *lim) { *lim = s_lim; }
+void config_get_thermal(ctrl_thermal_cfg_t *th) { *th = s_th; }

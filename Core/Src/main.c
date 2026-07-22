@@ -11,6 +11,8 @@
 #include "sensors.h"
 #include "ina2xx.h"
 #include "control.h"
+#include "limits.h"
+#include "thermal.h"
 #include "config_protocol.h"
 #include "can_n2k.h"
 
@@ -30,6 +32,10 @@ int main(void)
     ctrl_globals_t g;
     ctrl_profile_t prof;
 
+    ctrl_thermal_cfg_t thcfg; config_get_thermal(&thcfg);
+    ctrl_thermal_t     thermal; ctrl_thermal_init(&thermal, &thcfg);
+
+    const float dt_s = (float)LOOP_PERIOD_MS / 1000.0f;
     uint32_t next = HAL_GetTick();
     for (;;) {
         can_n2k_poll();
@@ -65,7 +71,8 @@ int main(void)
                 .ext_faults   = 0u,                     /* TODO: OR in BMS/shunt faults */
             };
 
-            /* No arbitration ceilings active yet — all +inf. */
+            /* Build arbitration ceilings: hardware limit set + thermal governor.
+             * (BMS/engine/belt/capability ceilings land with their subsystems.) */
             ctrl_ceilings_t ceil = {
                 .thermal_w = CTRL_CEILING_INACTIVE, .bms_ccl_w = CTRL_CEILING_INACTIVE,
                 .battery_c_w = CTRL_CEILING_INACTIVE, .wiring_w = CTRL_CEILING_INACTIVE,
@@ -73,6 +80,9 @@ int main(void)
                 .belt_w = CTRL_CEILING_INACTIVE, .engine_w = CTRL_CEILING_INACTIVE,
                 .user_cap_w = CTRL_CEILING_INACTIVE,
             };
+            ctrl_limits_t lim; config_get_limits(&lim);
+            ctrl_limits_apply(&ceil, &lim, &g, r.vbat_pack_v);
+            ceil.thermal_w = ctrl_thermal_update(&thermal, &thcfg, r.alt_temp_c, dt_s);
 
             ctrl_command_t cmd = ctrl_tick(&ctrl, &m, &ceil, &prof, &g, LOOP_PERIOD_MS);
             if (cmd.field_open) field_drive_fault_cutoff();
