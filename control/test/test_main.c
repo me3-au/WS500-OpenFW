@@ -12,6 +12,7 @@ void test_field(void);
 void test_statemachine(void);
 void test_limits(void);
 void test_faults(void);
+void test_thermal(void);
 
 int main(void)
 {
@@ -20,6 +21,7 @@ int main(void)
     test_statemachine();
     test_limits();
     test_faults();
+    test_thermal();
 
     printf("\n%d checks, %d failures\n", g_checks, g_fails);
     return g_fails ? 1 : 0;
