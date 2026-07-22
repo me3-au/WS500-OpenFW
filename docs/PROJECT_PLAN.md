@@ -122,16 +122,18 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
   Enable vs Feature-In; which output = Lamp vs LED); identify the 0x0C/0x10/0x4C I²C devices;
   confirm package + field-driver topology. *Exit:* `board.h` constants bench-verified; I/O
   coverage all ✅.
-- **M2.5 — Control-model reconciliation** → *gates M3.* Rewrite `regulator.h/.c` to the
-  two-stage LFP spec: delete `REG_ABSORPTION`, `temp_comp_per_c`, `sys_voltage 12/24/36/48`;
-  adopt CHARGE/REST + V/cell + watts arbitration; model single-shunt `valt` (bus voltage at
-  battery *or* alternator side, not always-present). Resolve **#6a config strategy**.
-  *Exit:* the interface compiles against the spec's model; no legacy multi-stage surface
-  remains; decision #6a recorded.
-- **M3 — Core firmware.** Implement the two-stage engine + one named LFP profile; scale
-  sensors; working INA2xx driver; field PWM into a **dummy load**; watchdog; fault/break path
-  tested; **CAN Rx for control (#9)** (BMS charge permission/current). *Exit:* closed-loop CV
-  hold on the bench supply into a dummy load, with fault cutoff verified.
+- **M2.5 — Control-model reconciliation** → *gates M3.* ✅ **mostly done.**
+  Legacy `regulator.{h,c}` deleted; replaced by the pure, HAL-free **`control/`** core
+  (spec-native `ctrl_*` vocabulary, two-stage CHARGE/REST, per-cell V, watts arbitration).
+  Built + CI-tested: `control` engine, `arbitration`, `field` (rotor clamp), `limits`,
+  `faults` (OPEN/LIMP ladder), `thermal` governor — all unit-tested on the native CI runner;
+  wired end-to-end in the app. **Remaining:** decision **#6a config strategy** (still 🧩).
+- **M3 — Core firmware.** 🔨 *in progress.* **Done (pure/CI-tested):** two-stage engine +
+  profile 1, arbitration, CV/field loop, rotor clamp, thermal governor, fault ladder,
+  hardware limit set. **Remaining:** finish the driver side — INA2xx I²C transfers, stator/
+  TIM2 RPM capture, DIO (enable/Feature-In/lamp/LED), **CAN Rx for control (#9)** (BMS
+  permission/current) — plus inner-loop gain tuning, watchdog, and bench bring-up. *Exit:*
+  closed-loop CV hold on the bench supply into a dummy load, with fault cutoff verified.
 - **M4 — Config + client app.** Config schema (per #6a), flash config store (CRC+version),
   `ws500ctl` read/write/verify, FW update via CLI, telemetry stream (#20). *Exit:* config
   round-trips; FW updates via `ws500ctl`; config survives an update.
