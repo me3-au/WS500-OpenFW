@@ -36,6 +36,7 @@ constrain the code.
 | `FLASH_AND_RECOVERY.md` | Backup/rollback/update procedures | ⬜ (constraints in §3 here, to extract) |
 | `SAFETY.md` | Bench-safety rules | ⬜ (rules in §5 here, to extract) |
 | `test-fw/README.md` | Bring-up test firmware spec | ⬜ (spec in §4 here, to extract) |
+| `CLIENT_CONNECTIVITY.md` | Programming/firmware/monitoring across PC/Mac/iOS/Android over USB+CAN (decision) | ✅ |
 | `CAN_TECHNICAL_SPEC.md` / `CAN_USER_GUIDE.md` / `USER_GUIDE.md` / `TEST_PLAN.md` | see deliverables | ⬜ |
 
 > The old plan named a single `SOFTWARE_DESIGN_SPEC.md` that was never written; that role is
@@ -87,7 +88,7 @@ WS500's proprietary STM32 firmware — and we don't need it.
 | 6 | Config protocol + store | `config_protocol.c` + flash-page store | M4 | 🔨 / 🧩 (see #6a) |
 | 6a | **Config strategy decision** | stock `$`-compatible vs new JSON profile schema (they conflict) | M2/M3 | 🧩 |
 | 7 | Update/rollback/backup/recovery | `FLASH_AND_RECOVERY.md` (+ §3) | M1 | ⬜ |
-| 8 | Client app | `tools/ws500ctl/` (USB CDC CLI) | M4 | ⬜ |
+| 8 | Client app | **WebSerial/WebUSB web app** (PC/Mac/Android: program+monitor+firmware, one codebase) + native `tools/ws500ctl/` CLI (scripting/CI/flash). iOS = monitor via CAN/VRM only. See `CLIENT_CONNECTIVITY.md` | M4 | ⬜ |
 | 9 | CAN Rx for control | BMS charge-permission/current in (feeds the loop) | M3 | ⬜ |
 | 10 | CAN Tx telemetry + RBM | status PGNs, regulator sync + `CAN_TECHNICAL_SPEC.md` | M5 | ⬜ |
 | 11 | CAN user doc | `CAN_USER_GUIDE.md` | M5 | ⬜ |
