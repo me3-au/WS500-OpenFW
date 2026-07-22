@@ -11,6 +11,7 @@ void test_arbitration(void);
 void test_field(void);
 void test_statemachine(void);
 void test_limits(void);
+void test_faults(void);
 
 int main(void)
 {
@@ -18,6 +19,7 @@ int main(void)
     test_field();
     test_statemachine();
     test_limits();
+    test_faults();
 
     printf("\n%d checks, %d failures\n", g_checks, g_fails);
     return g_fails ? 1 : 0;
