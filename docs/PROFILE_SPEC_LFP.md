@@ -87,6 +87,15 @@ All conditions are evaluated on damped signals (§5) and must hold
 | T3 | FLOAT → BULK, STANDBY-rest → BULK | **Revert**, any of: `~V_comp ≤ v_revert` for `t_revert_hold_s`; `SOC ≤ soc_revert_pct` (trusted only); net Ah discharged since charged ≥ `ah_revert` (tiers 1–2 only) |
 | T4 | any → STANDBY | Ignition off (reason `off`; warmup re-gated only if off > `warmup_reset_min`, default 30 min) or unrecoverable fault (reason `fault`, latched). Degraded-but-recoverable faults instead select the Limp Home profile → FLOAT at `v_limp` (control spec §7 ladder) |
 
+**T2 primary exit — voltage + time (added, supersedes tail as the default).** The
+reliable charged-exit is **held at `cv_target` continuously for `cv_hold_exit_min`
+(default 15 min) → charged.** For LFP, ~10–15 min at 3.6 V/cell is full in practice. This
+needs **no current truth** — it works at any shunt tier and any placement, so it is the
+robust default. The tail-power exit (T2a) is **retained as an optional faster exit** when
+battery-truth current is available (tiers 1–2); it is no longer required. Rationale: tail
+current is "optimal" but placement-sensitive and fussy; voltage + time is adequate and
+universal. (A smarter tail/SOC-blended exit can come later.)
+
 Anti-flap guarantee: T2 and T3 hold times plus §5 damping make BULK↔FLOAT
 oscillation impossible faster than `t_tail_hold_s + t_revert_hold_s`
 (worst case minutes, not seconds).

@@ -73,11 +73,13 @@ behavior. Switching profiles never adds states.
 
 ## 4. How CHARGE ends and REST reverts
 
-- **Charged (CHARGE → REST):** first of — **tail current** (power at the battery
-  falls below a threshold while at target voltage, held for a time), a **SOC target**
-  (if a trusted SOC source exists), a **duration backstop**, or **Solar Finish** (exit
-  the moment voltage target is reached). *Tail exit needs battery-side current truth —
-  with an alternator-side shunt it's disabled and the tool says so.*
+- **Charged (CHARGE → REST):** the **primary rule is voltage + time** — once the pack
+  has been **held at the target voltage for a set time** (default ~15 minutes at 3.6 V/
+  cell), the battery is full. This needs no current sensor and works regardless of shunt
+  placement, so it's the reliable default. *Optional faster exits* also apply when the
+  data is available: **tail current** (battery-side current falls low while at target),
+  a **SOC target** (trusted SOC source), **Solar Finish** (exit at target-voltage entry),
+  and a **duration backstop**. Tail current is an optimization, not a requirement.
 - **Revert (REST → CHARGE):** voltage sags below a per-cell threshold (held), or SOC
   drops, or a net amount of Ah has been drawn. Hold-times prevent flapping.
 

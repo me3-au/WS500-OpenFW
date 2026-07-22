@@ -158,6 +158,11 @@ ctrl_command_t ctrl_tick(ctrl_t *c,
             if (prof->exit_at_cv_entry) {                          /* T2d Solar Finish */
                 if (c->vclamp_hold_ms >= (uint32_t)g->t_vclamp_s * 1000u) charged = true;
             } else {
+                /* PRIMARY: held at CV target for cv_hold_exit_min → full. Voltage+time
+                 * only — robust regardless of shunt placement or current truth. */
+                if (g->cv_hold_exit_min > 0 &&
+                    c->vclamp_hold_ms >= (uint32_t)g->cv_hold_exit_min * 60000u) charged = true;
+                /* OPTIONAL bonus: tail power (only with battery-truth current). */
                 if (tier_battery_truth(m->isrc) && clamped && c->p_tail_f <= g->p_tail_w) {
                     c->tail_hold_ms += dt_ms;                      /* T2a tail power */
                     if (c->tail_hold_ms >= (uint32_t)g->t_tail_hold_s * 1000u) charged = true;

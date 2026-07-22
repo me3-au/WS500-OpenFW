@@ -164,6 +164,8 @@ typedef struct {
     float   p_tail_w;           /* T2a tail-power exit (materialized) */
     uint16_t t_tail_hold_s;
     uint16_t t_vclamp_s;        /* voltage-clamp qualifier (T2d / Bulk(Voltage)) */
+    uint16_t cv_hold_exit_min;  /* PRIMARY exit: held at CV target this long → charged
+                                 * (voltage+time; no current truth needed). 0 = off. */
     uint16_t t_charge_max_min;  /* T2c backstop */
     uint16_t warmup_time_s;
     float   warmup_coolant_c;   /* NAN = disabled */

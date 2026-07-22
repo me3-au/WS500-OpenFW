@@ -23,6 +23,7 @@ void config_init(void)
     s_g.p_tail_w          = 0.0f;
     s_g.t_tail_hold_s     = 60;
     s_g.t_vclamp_s        = 5;
+    s_g.cv_hold_exit_min  = 15;   /* held at CV 15 min → full (voltage+time) */
     s_g.t_charge_max_min  = 480;
     s_g.warmup_time_s     = 30;
     s_g.warmup_coolant_c  = NAN;

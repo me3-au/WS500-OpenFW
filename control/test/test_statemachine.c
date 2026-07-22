@@ -15,6 +15,7 @@ static ctrl_globals_t G(void)
     g.p_tail_w = 50.0f;
     g.t_tail_hold_s = 2;
     g.t_vclamp_s = 2;
+    g.cv_hold_exit_min = 0;   /* off by default in tests; enabled per-case */
     g.t_charge_max_min = 480;
     g.warmup_time_s = 0;                /* no warmup delay in tests */
     g.warmup_coolant_c = NAN;
@@ -172,5 +173,18 @@ void test_statemachine(void)
         CHECK(cmd.faults & CTRL_FAULT_OVERVOLTAGE);   /* still latched */
         CHECK(cmd.state == CTRL_STANDBY);
         CHECK(cmd.field_open);
+    }
+
+    /* 10) Voltage+time exit: held at CV target for cv_hold_exit_min charges even with
+     *     tail DISARMED (alt-side shunt) and high power — no current truth needed. */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_globals_t gt = G(); gt.cv_hold_exit_min = 1;   /* 1 minute */
+        ctrl_measured_t m = M(3.60f);        /* at CV target → clamped */
+        m.isrc = CTRL_ISRC_ALT_SHUNT;        /* tier 3: tail exit disarmed */
+        m.watts_batt = 500.0f;               /* well above tail — not a tail exit */
+        ctrl_command_t cmd = {0};
+        for (int i = 0; i < 70; i++) cmd = ctrl_tick(&e, &m, &c, &p, &gt, 1000); /* >60 s at CV */
+        CHECK(cmd.state == CTRL_FLOAT);
     }
 }
