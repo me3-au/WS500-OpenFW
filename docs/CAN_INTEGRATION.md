@@ -12,16 +12,24 @@ for**, and how it fits common systems.
 
 ## 0. Priority & architecture (v1)
 
-- **CAN Tx (telemetry OUT) is the near-term target** — specifically **NMEA 2000 →
-  Victron Cerbo GX**. It's read-only broadcast, so it can't affect the control loop,
-  and the engine already produces everything worth reporting. Ships early.
+- **CAN Tx (telemetry OUT) is the near-term target** — get the regulator onto a
+  **Victron Cerbo GX**. Read-only broadcast, so it can't affect the control loop.
+- **A Cerbo's VE.Can port is *either* NMEA 2000 *or* RV-C — not both** (mutually
+  exclusive per port; the Cerbo has one port — only Venus/Ekrano GX have two). So
+  **which dialect reaches a given Cerbo depends on the owner's port profile**: marine
+  installs usually run VE.Can/N2K, RV installs often run RV-C. To appear on *any* Cerbo
+  the regulator should therefore support **both N2K and RV-C Tx**.
+  *(Caveat: Victron's ingestion is device-type-specific — the documented RV-C-IN types
+  are tanks/batteries/senders, not alternators — so verify the device actually shows on
+  real hardware; it may need to present as a DC-source/charger type the GX accepts.)*
 - **CAN Rx (control IN — BMS/DVCC ceilings)** comes **later**; until then those
   ceilings simply aren't in the arbitration min() and the regulator runs on its own
   profile + hardware limits.
 - **Dialect-neutral snapshot:** the firmware builds one internal telemetry snapshot
   (`control/telemetry.h`) describing *what* to report; per-dialect **encoders** map it
-  to the wire. **NMEA 2000 encoder first** (Cerbo); **RV-C encoder later** (§8), reading
-  the same snapshot. The control core never knows about wire formats.
+  to the wire. **N2K encoder first**, **RV-C encoder close behind** (both feed a Cerbo
+  depending on its profile), reading the same snapshot. The control core never knows
+  about wire formats.
 
 ---
 
@@ -104,26 +112,32 @@ bus is `⟦future-hw⟧`.)*
 4. Declare your **shunt location** (§4) so tail-exit behaves correctly.
 5. For twin installs, enable **regulator sync** on both units.
 
-## 8. RV-C (RV systems) — a later dialect
+## 8. RV-C — a second Tx dialect (co-important, not just RV)
 
 RV-C is the **RV industry's** CAN standard (motorhomes/trailers), as NMEA 2000 is the
-**marine** one. Both are J1939/CAN-based and **coexist on one physical bus**, but use
-different message sets and addressing.
+**marine** one. Both are J1939/CAN-based; a given CAN port runs one profile or the other.
 
-- **Victron / Cerbo uses NMEA 2000, not RV-C** — so RV-C is *not* needed for the Cerbo
-  goal. It matters for **RV-C systems** (RV-C displays, Firefly, etc.).
-- **RV-C Tx** would emit its own DGNs: `CHARGER_STATUS`, `DC_SOURCE_STATUS_1/2/3`
-  (V/A/T/SoC), `ALTERNATOR_STATUS`.
+- **The Victron Cerbo GX supports RV-C** (both IN and OUT) — its VE.Can port is set to
+  *either* the VE.Can (N2K) profile *or* the RV-C profile, **not both** (the Cerbo has a
+  single port; only Venus/Ekrano GX have two). So **an RV owner whose Cerbo runs the RV-C
+  profile will only see us if we speak RV-C.** RV-C is therefore *co-important with N2K*,
+  not an RV-only afterthought.
+- **RV-C Tx** emits its own DGNs: `CHARGER_STATUS`, `DC_SOURCE_STATUS_1/2/3` (V/A/T/SoC),
+  `ALTERNATOR_STATUS`.
 - **RBM (Remote Battery Master):** a priority-based *election* — only the highest-
-  priority device broadcasts battery (`DC_SOURCE`) data. If we transmit RV-C battery
-  data we must implement defer-to-higher-priority behavior (the stock WS500 supported
-  this). NMEA 2000 telemetry does not need it.
+  priority device broadcasts battery (`DC_SOURCE`) data. If we transmit RV-C battery data
+  we must implement defer-to-higher-priority behavior (the stock WS500 supported this).
+- **Ingestion caveat (both dialects):** Victron's documented RV-C-IN device types are
+  tanks/batteries/senders — an alternator/charger isn't listed — and N2K ingestion is
+  likewise device-type-specific. So *showing up* on the Cerbo must be **verified on real
+  hardware**; the device may need to present as a DC-source/charger type the GX accepts.
 - **Cost/impact:** RV-C is an **additional Tx encoder** (the NMEA2000 library doesn't do
-  RV-C) plus the RBM election — bounded work, added when there's an RV-C user need. It
-  reads the **same telemetry snapshot** as the N2K encoder, so the control core is
-  untouched.
+  RV-C) plus the RBM election — bounded work. It reads the **same telemetry snapshot** as
+  the N2K encoder, so the control core is untouched.
 
-**Decision (v1):** NMEA 2000 out (Cerbo) first; RV-C is a scoped follow-on dialect.
+**Decision (v1):** build the **N2K encoder first** (library in hand), **RV-C close behind**
+as the second encoder over the same snapshot — both are real paths to a Cerbo depending on
+its port profile. Verify actual GX display on hardware for each.
 
 ---
 
