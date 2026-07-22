@@ -191,7 +191,17 @@ typedef struct {
     uint32_t              time_in_state_ms;
     uint32_t              faults;        /* latched + active bits */
     float                 ah_since_charged; /* T3 Ah revert integrator */
-    /* ~V_comp / ~P_bat filter state to be added with the transition logic. */
+
+    /* Damped signals (§1.4); NAN = unseeded. */
+    float                 v_ctrl_f;      /* ~V_comp, fast (CV loop, 1 s) */
+    float                 v_revert_f;    /* ~V_comp, slow (T3 revert, 30 s) */
+    float                 p_tail_f;      /* ~P_bat (T2a tail, 60 s) */
+
+    /* Transition hold timers (ms). */
+    uint32_t              warmup_ms;
+    uint32_t              tail_hold_ms;
+    uint32_t              revert_hold_ms;
+    uint32_t              vclamp_hold_ms;
 } ctrl_t;
 
 /* ---- API ------------------------------------------------------------------ */
