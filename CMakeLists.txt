@@ -22,6 +22,7 @@ set(APP_SRC
     control/Src/limits.c
     control/Src/faults.c
     control/Src/thermal.c
+    control/Src/telemetry.c
 )
 
 # --- Vendored deps you must add (see Drivers/README.md) ---

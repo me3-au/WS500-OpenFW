@@ -93,9 +93,10 @@ WS500's proprietary STM32 firmware — and we don't need it.
 | 6a | **Config strategy decision** | stock `$`-compatible vs new JSON profile schema (they conflict) | M2/M3 | 🧩 |
 | 7 | Update/rollback/backup/recovery | `FLASH_AND_RECOVERY.md` (+ §3) | M1 | ⬜ |
 | 8 | Client app | **WebSerial/WebUSB web app** (PC/Mac/Android: program+monitor+firmware, one codebase) + native `tools/ws500ctl/` CLI (scripting/CI/flash). iOS = monitor via CAN/VRM only. See `CLIENT_CONNECTIVITY.md` | M4 | ⬜ |
-| 9 | CAN Rx for control | BMS charge-permission/current in (feeds the loop) | M3 | ⬜ |
-| 10 | CAN Tx telemetry + RBM | status PGNs, regulator sync + `CAN_TECHNICAL_SPEC.md` | M5 | ⬜ |
-| 11 | CAN user doc | `CAN_USER_GUIDE.md` | M5 | ⬜ |
+| 9 | **CAN Tx telemetry (NMEA2000 → Cerbo)** | broadcast the dialect-neutral snapshot as N2K PGNs; **near-term / low-risk** (read-only) | **M3** | 🔨 snapshot done |
+| 10 | CAN Rx for control | BMS/DVCC ceilings + engine RPM into arbitration | M5 | ⬜ |
+| 10a | RV-C dialect (Tx + RBM election) | 2nd encoder over the same snapshot, for RV systems (Victron/Cerbo uses N2K, not RV-C) | later | ⬜ |
+| 11 | CAN docs | `CAN_INTEGRATION.md` | M3/M5 | 🔨 draft |
 | 12 | User documentation | `USER_GUIDE.md` (install, config, LED codes, troubleshooting) | M6 | ⬜ |
 | 13 | Testing + bug tracking | `TEST_PLAN.md`; Renode emulation + bench HIL; GitHub Issues | M0→M6 | ⬜ |
 | 14 | Bring-up test firmware | `test-fw/` (§4). *ADC binding already recovered — this confirms scaling on bench* | M2 | ⬜ |

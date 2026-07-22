@@ -13,6 +13,7 @@
 #include "control.h"
 #include "limits.h"
 #include "thermal.h"
+#include "telemetry.h"
 #include "config_protocol.h"
 #include "can_n2k.h"
 
@@ -88,7 +89,9 @@ int main(void)
             if (cmd.field_open) field_drive_fault_cutoff();
             else                field_drive_set(cmd.field_duty);
 
-            can_n2k_publish(&m, &ctrl);
+            ctrl_telemetry_t tlm;
+            ctrl_build_telemetry(&tlm, &m, &cmd, &g, &prof);
+            can_n2k_publish(&tlm);   /* NMEA2000 out → Cerbo */
         }
     }
 }

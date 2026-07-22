@@ -4,9 +4,24 @@
 > §8). The CAN driver/PGN layer is not yet implemented — this is the target behavior.
 
 The regulator has **one** CAN bus (bxCAN on the WS500). Over that single bus it speaks
-several dialects at once — NMEA 2000, J1939, Victron VE.Can, and CAN-BMS frames —
+several dialects at once — NMEA 2000, J1939, Victron VE.Can, RV-C, and CAN-BMS frames —
 configured per install. This document explains what it **sends**, what it **listens
 for**, and how it fits common systems.
+
+---
+
+## 0. Priority & architecture (v1)
+
+- **CAN Tx (telemetry OUT) is the near-term target** — specifically **NMEA 2000 →
+  Victron Cerbo GX**. It's read-only broadcast, so it can't affect the control loop,
+  and the engine already produces everything worth reporting. Ships early.
+- **CAN Rx (control IN — BMS/DVCC ceilings)** comes **later**; until then those
+  ceilings simply aren't in the arbitration min() and the regulator runs on its own
+  profile + hardware limits.
+- **Dialect-neutral snapshot:** the firmware builds one internal telemetry snapshot
+  (`control/telemetry.h`) describing *what* to report; per-dialect **encoders** map it
+  to the wire. **NMEA 2000 encoder first** (Cerbo); **RV-C encoder later** (§8), reading
+  the same snapshot. The control core never knows about wire formats.
 
 ---
 
@@ -89,7 +104,28 @@ bus is `⟦future-hw⟧`.)*
 4. Declare your **shunt location** (§4) so tail-exit behaves correctly.
 5. For twin installs, enable **regulator sync** on both units.
 
+## 8. RV-C (RV systems) — a later dialect
+
+RV-C is the **RV industry's** CAN standard (motorhomes/trailers), as NMEA 2000 is the
+**marine** one. Both are J1939/CAN-based and **coexist on one physical bus**, but use
+different message sets and addressing.
+
+- **Victron / Cerbo uses NMEA 2000, not RV-C** — so RV-C is *not* needed for the Cerbo
+  goal. It matters for **RV-C systems** (RV-C displays, Firefly, etc.).
+- **RV-C Tx** would emit its own DGNs: `CHARGER_STATUS`, `DC_SOURCE_STATUS_1/2/3`
+  (V/A/T/SoC), `ALTERNATOR_STATUS`.
+- **RBM (Remote Battery Master):** a priority-based *election* — only the highest-
+  priority device broadcasts battery (`DC_SOURCE`) data. If we transmit RV-C battery
+  data we must implement defer-to-higher-priority behavior (the stock WS500 supported
+  this). NMEA 2000 telemetry does not need it.
+- **Cost/impact:** RV-C is an **additional Tx encoder** (the NMEA2000 library doesn't do
+  RV-C) plus the RBM election — bounded work, added when there's an RV-C user need. It
+  reads the **same telemetry snapshot** as the N2K encoder, so the control core is
+  untouched.
+
+**Decision (v1):** NMEA 2000 out (Cerbo) first; RV-C is a scoped follow-on dialect.
+
 ---
 
-*Exact PGN field mappings and the per-vendor BMS driver details are an implementation
+*Exact PGN/DGN field mappings and the per-vendor BMS driver details are an implementation
 deliverable; this document is the integration contract.*
