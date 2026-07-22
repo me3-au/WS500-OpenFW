@@ -22,6 +22,8 @@ static ctrl_globals_t G(void)
     g.rotor_rated_v = 12.0f;
     g.rotor_v_max = NAN;
     g.allow_full_field_48v = false;
+    g.limp_vcell = 3.30f;
+    g.limp_power_cap_w = 250.0f;
     return g;
 }
 
@@ -146,5 +148,29 @@ void test_statemachine(void)
         ctrl_measured_t ml = M(3.20f);          /* below revert 3.28 */
         for (int i = 0; i < 150; i++) cmd = ctrl_tick(&e, &ml, &c, &p, &g, 1000); /* settle 30s filter */
         CHECK(cmd.state == CTRL_BULK);
+    }
+
+    /* 8) External recoverable fault (LOST_BMS) → Limp Home = FLOAT, not field-open. */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_measured_t m = M(3.35f);
+        m.ext_faults = CTRL_FAULT_LOST_BMS;
+        ctrl_command_t cmd = {0};
+        for (int i = 0; i < 5; i++) cmd = ctrl_tick(&e, &m, &c, &p, &g, 100);
+        CHECK(cmd.faults & CTRL_FAULT_LOST_BMS);
+        CHECK(cmd.state == CTRL_FLOAT);
+        CHECK(!cmd.field_open);
+    }
+
+    /* 9) OPEN fault latches: overvoltage persists after voltage returns to normal. */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_measured_t hi = M(3.75f);
+        ctrl_tick(&e, &hi, &c, &p, &g, 100);    /* trips OV */
+        ctrl_measured_t ok = M(3.30f);          /* voltage back to normal */
+        ctrl_command_t cmd = ctrl_tick(&e, &ok, &c, &p, &g, 100);
+        CHECK(cmd.faults & CTRL_FAULT_OVERVOLTAGE);   /* still latched */
+        CHECK(cmd.state == CTRL_STANDBY);
+        CHECK(cmd.field_open);
     }
 }

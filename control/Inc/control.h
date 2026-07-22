@@ -120,6 +120,9 @@ typedef struct {
 
     bool  ignition;        /* enable/wake input */
     bool  feature_in;      /* the single assignable Feature-IN, function-resolved */
+
+    uint32_t ext_faults;   /* faults detected by other modules (BMS loss, shunt
+                            * implausible, …), OR'd in by the app (ctrl_fault_bits_t) */
 } ctrl_measured_t;
 
 /* ---- Arbitration ceilings (Watts; INACTIVE = +inf) ------------------------ */
@@ -168,6 +171,10 @@ typedef struct {
     float   rotor_rated_v;      /* default 12 on 48V systems (§5.1) */
     float   rotor_v_max;        /* NAN = use rated; override ladder */
     bool    allow_full_field_48v;
+
+    /* Limp Home target (§7 degraded-mode ladder) — safe-mode FLOAT. */
+    float   limp_vcell;         /* v_limp, default 3.30 V/cell */
+    float   limp_power_cap_w;   /* reduced power cap in limp */
 } ctrl_globals_t;
 
 /* ---- Hardware limit set (CONTROL_SPEC §2.1), native units ----------------- *

@@ -62,6 +62,7 @@ int main(void)
                 .soc_trusted  = false,
                 .ignition     = false,                  /* TODO: read PB13 (dio driver) */
                 .feature_in   = false,
+                .ext_faults   = 0u,                     /* TODO: OR in BMS/shunt faults */
             };
 
             /* No arbitration ceilings active yet — all +inf. */

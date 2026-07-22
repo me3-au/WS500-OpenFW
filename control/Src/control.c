@@ -12,6 +12,7 @@
 #include "control.h"
 #include "arbitration.h"
 #include "field.h"
+#include "faults.h"
 
 /* Hard safety thresholds — raw signals only (§1.4, §7). */
 #define OV_VCELL_HARD      3.70f   /* per-cell overvoltage kill (above bulk 3.60) */
@@ -28,9 +29,6 @@
 /* Inner-loop gains (placeholders; bench-tunable). Normalized effort per unit. */
 #define KV_PER_VOLT        0.02f
 #define KP_PER_WATT        0.00005f
-
-#define CRIT_MASK  (CTRL_FAULT_OVERVOLTAGE | CTRL_FAULT_FIELD_SHORT | \
-                    CTRL_FAULT_FIELD_OVERCUR | CTRL_FAULT_OVERSPEED | CTRL_FAULT_WATCHDOG)
 
 static float ema(float prev, float x, float tau_s, float dt_s)
 {
@@ -108,26 +106,33 @@ ctrl_command_t ctrl_tick(ctrl_t *c,
     c->v_revert_f = ema(c->v_revert_f, m->vcomp_pack_v, TAU_VREVERT, dt_s);
     c->p_tail_f   = ema(c->p_tail_f,   m->watts_batt,   TAU_PTAIL,   dt_s);
 
-    /* ---- raw-signal safety comparators (§7) ---- */
-    uint32_t faults = c->faults;
-    const float vcell_raw = m->vbat_pack_v / (float)cells;
-    if (vcell_raw >= OV_VCELL_HARD) faults |= CTRL_FAULT_OVERVOLTAGE;
+    /* ---- faults: latch OPEN-class, recompute the rest live, merge external ---- */
+    uint32_t faults = c->faults & CTRL_FAULT_OPEN_MASK;   /* criticals latch until reset */
+    if (!isnan(m->vbat_pack_v)) {
+        if (m->vbat_pack_v / (float)cells >= OV_VCELL_HARD) faults |= CTRL_FAULT_OVERVOLTAGE;
+    } else {
+        faults |= CTRL_FAULT_LOST_VBAT_SENSE;             /* recoverable → LIMP */
+    }
     if (!isnan(m->alt_hotspot_c) && m->alt_hotspot_c >= ALT_HOT_HARD_C)   faults |= CTRL_FAULT_SELF_OVERTEMP;
     if (!isnan(m->driver_temp_c) && m->driver_temp_c >= DRIVER_HOT_HARD_C) faults |= CTRL_FAULT_SELF_OVERTEMP;
-
-    bool batt_block = false;
     if (!isnan(m->batt_temp_c)) {
-        if (m->batt_temp_c <= BATT_LOW_C)  { faults |= CTRL_FAULT_BATT_LOWTEMP;  batt_block = true; }
-        if (m->batt_temp_c >= BATT_HIGH_C) { faults |= CTRL_FAULT_BATT_HIGHTEMP; batt_block = true; }
+        if (m->batt_temp_c <= BATT_LOW_C)  faults |= CTRL_FAULT_BATT_LOWTEMP;
+        if (m->batt_temp_c >= BATT_HIGH_C) faults |= CTRL_FAULT_BATT_HIGHTEMP;
     }
+    faults |= m->ext_faults;                              /* BMS loss, shunt implausible, … */
     c->faults = faults;
 
-    const bool critical = (faults & CRIT_MASK) != 0;
-    const bool enable   = m->ignition && !critical && !batt_block;
+    const ctrl_disposition_t disp = ctrl_fault_disposition(faults);
+    const bool open       = (disp == CTRL_DISP_OPEN);
+    const bool limp       = (disp == CTRL_DISP_LIMP);
+    const bool batt_block = (faults & CTRL_FAULT_BLOCK_MASK) != 0;
+    const bool enable     = m->ignition && !open && !batt_block;
 
     /* ---- state machine (T1–T4) ---- */
     if (!enable) {
-        enter(c, CTRL_STANDBY, critical ? CTRL_SB_FAULT : CTRL_SB_OFF);
+        enter(c, CTRL_STANDBY, open ? CTRL_SB_FAULT : CTRL_SB_OFF);
+    } else if (limp) {
+        if (c->state != CTRL_FLOAT) enter(c, CTRL_FLOAT, CTRL_SB_OFF);  /* Limp Home = FLOAT@v_limp */
     } else {
         switch (c->state) {
         case CTRL_STANDBY:
@@ -187,10 +192,16 @@ ctrl_command_t ctrl_tick(ctrl_t *c,
         effort = 0.0f;
         field_open = true;
         c->cmd_power_w = 0.0f;
+    } else if (isnan(c->v_ctrl_f)) {
+        /* No usable voltage (e.g. lost VBat sense) — cannot regulate safely → off. */
+        effort = 0.0f;
+        c->cmd_power_w = 0.0f;
+        bind = CTRL_BIND_NONE;
     } else {
         float stage_w, cv_vcell;
-        if (c->state == CTRL_BULK) { stage_w = g->max_charge_power_w; cv_vcell = prof->cv_target_vcell; }
-        else                       { stage_w = prof->rest_power_cap_w; cv_vcell = prof->rest_voltage_vcell; }
+        if (c->state == CTRL_BULK)      { stage_w = g->max_charge_power_w;  cv_vcell = prof->cv_target_vcell; }
+        else if (limp)                  { stage_w = g->limp_power_cap_w;    cv_vcell = g->limp_vcell; }
+        else                            { stage_w = prof->rest_power_cap_w; cv_vcell = prof->rest_voltage_vcell; }
 
         const ctrl_arb_t arb = ctrl_arbitrate(stage_w, ceil);
 

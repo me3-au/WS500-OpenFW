@@ -28,6 +28,8 @@ void config_init(void)
     s_g.rotor_rated_v     = 12.0f;
     s_g.rotor_v_max       = NAN;
     s_g.allow_full_field_48v = false;
+    s_g.limp_vcell        = 3.30f;   /* v_limp (PROFILE_SPEC §1) */
+    s_g.limp_power_cap_w  = 250.0f;  /* placeholder reduced cap */
 
     /* Active profile 1 — Bulk, Float Norm (PROFILE_SPEC §4.1). */
     s_prof.id                = 1;
