@@ -1,11 +1,16 @@
 /*
- * main.c — WS500-OpenFW entry point and top-level control loop.
+ * main.c — WS500-OpenFW app orchestrator.
+ *
+ * Wires drivers (hardware) to the pure control core: read sensors → assemble the
+ * control input → run the engine at a fixed rate → apply the field command →
+ * pump comms. The engine (control/) never touches hardware; this layer does.
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "board.h"
 #include "field_drive.h"
 #include "sensors.h"
-#include "regulator.h"
+#include "ina2xx.h"
+#include "control.h"
 #include "config_protocol.h"
 #include "can_n2k.h"
 
@@ -18,30 +23,61 @@ int main(void)
 
     field_drive_init();     /* starts at 0% — fail-safe */
     sensors_init();
-    config_init();          /* $XXX: config over USB CDC (stub) */
-    can_n2k_init();         /* NMEA2000 / RV-C (stub) */
+    config_init();
+    can_n2k_init();
 
-    reg_state_t   reg;      regulator_init(&reg);
-    reg_config_t  cfg;      config_get(&cfg);     /* from parsed $CPx/$SCx */
-    reg_inputs_t  in;
+    ctrl_t         ctrl;    ctrl_init(&ctrl);
+    ctrl_globals_t g;
+    ctrl_profile_t prof;
 
     uint32_t next = HAL_GetTick();
     for (;;) {
         can_n2k_poll();
-        config_poll();      /* handle USB CDC config traffic */
+        config_poll();
 
         if ((int32_t)(HAL_GetTick() - next) >= 0) {
             next += LOOP_PERIOD_MS;
 
             sensors_update();
-            sensors_read(&in);
-            config_get(&cfg);
+            sensor_readings_t r;
+            sensors_read(&r);
+            config_get(&g, &prof);
 
-            reg_output_t o = regulator_step(&reg, &in, &cfg, LOOP_PERIOD_MS);
-            if (o.fault) field_drive_fault_cutoff();
-            else         field_drive_set(o.field);
+            /* Assemble the control input from physical readings. Signals from
+             * not-yet-implemented drivers use conservative fail-safe placeholders. */
+            ctrl_measured_t m = {
+                .vbat_pack_v  = r.vbat_pack_v,
+                .vcomp_pack_v = r.vbat_pack_v,          /* no R model yet */
+                .amps_batt    = r.amps_batt,
+                .watts_batt   = ina2xx_power_w(),
+                .isrc         = CTRL_ISRC_NONE,         /* TODO: from ShuntAtBat config */
+                .v_supply_v   = r.vbat_pack_v,          /* TODO: measure field supply */
+                .alt_hotspot_c= r.alt_temp_c,           /* no hot-spot model yet */
+                .batt_temp_c  = r.batt_temp_c,
+                .driver_temp_c= r.driver_temp_c,
+                .rpm          = 0.0f,
+                .rpm_state    = CTRL_RPM_LOST,          /* TODO: TIM2/CAN fusion */
+                .run_state    = CTRL_RUN_NOT_RUNNING,
+                .soc_pct      = -1.0f,
+                .soc_trusted  = false,
+                .ignition     = false,                  /* TODO: read PB13 (dio driver) */
+                .feature_in   = false,
+            };
 
-            can_n2k_publish(&in, &reg);   /* status PGNs */
+            /* No arbitration ceilings active yet — all +inf. */
+            ctrl_ceilings_t ceil = {
+                .thermal_w = CTRL_CEILING_INACTIVE, .bms_ccl_w = CTRL_CEILING_INACTIVE,
+                .battery_c_w = CTRL_CEILING_INACTIVE, .wiring_w = CTRL_CEILING_INACTIVE,
+                .alt_absolute_w = CTRL_CEILING_INACTIVE, .alt_capability_w = CTRL_CEILING_INACTIVE,
+                .belt_w = CTRL_CEILING_INACTIVE, .engine_w = CTRL_CEILING_INACTIVE,
+                .user_cap_w = CTRL_CEILING_INACTIVE,
+            };
+
+            ctrl_command_t cmd = ctrl_tick(&ctrl, &m, &ceil, &prof, &g, LOOP_PERIOD_MS);
+            if (cmd.field_open) field_drive_fault_cutoff();
+            else                field_drive_set(cmd.field_duty);
+
+            can_n2k_publish(&m, &ctrl);
         }
     }
 }

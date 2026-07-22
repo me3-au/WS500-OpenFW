@@ -88,26 +88,25 @@ static float ntc_temp_c(unsigned slot, float beta)
     return (1.0f/invT) - 273.15f;
 }
 
-void sensors_read(reg_inputs_t *out)
+void sensors_read(sensor_readings_t *out)
 {
     const float vdda = sensors_vdda();                 /* mV */
     const float lsb  = vdda / 4095.0f / 1000.0f;       /* V per count at the pin */
 
     /* Battery voltage: PC5 through the recovered 34.33:1 divider (fact). */
-    out->vbat = sensors_raw(SENSOR_CH_VBAT) * lsb * SENSOR_VBAT_DIVIDER;
+    out->vbat_pack_v = sensors_raw(SENSOR_CH_VBAT) * lsb * SENSOR_VBAT_DIVIDER;
 
     /* Temperatures: NTC Beta model with the recovered Beta values (fact).
-     * Confirm R_FIXED/R0 and which of PA1/PA2 is the alternator sensor. */
-    out->alt_temp_c  = ntc_temp_c(SENSOR_CH_TEMP_A1, SENSOR_NTC_BETA_ALT);
-    out->batt_temp_c = ntc_temp_c(SENSOR_CH_TEMP_BATT, SENSOR_NTC_BETA_BATT);
+     * Confirm R_FIXED/R0 on the board. PA1 = alt NTC, PA2 = driver-stage NTC,
+     * PA3 = battery NTC (which of PA1/PA2 is alt vs internal: confirm on bench). */
+    out->alt_temp_c    = ntc_temp_c(SENSOR_CH_TEMP_A1,   SENSOR_NTC_BETA_ALT);
+    out->driver_temp_c = ntc_temp_c(SENSOR_CH_TEMP_A2,   SENSOR_NTC_BETA_ALT);
+    out->batt_temp_c   = ntc_temp_c(SENSOR_CH_TEMP_BATT, SENSOR_NTC_BETA_BATT);
 
-    /* Charge current + local bus voltage come from the INA2xx monitor at the shunt
-     * (battery or alternator side per ShuntAtBat) — NOT the internal ADC. */
-    out->amps        = ina2xx_current_a();
-    out->valt        = ina2xx_bus_v();   /* bus V at the shunt location */
-
-    out->rpm         = 0.0f;        /* from TIM2 stator capture (see STATOR_TIM) */
-    out->bms_charge_ok = true;      /* until CAN BMS wired */
+    /* Charge current + local bus voltage: INA2xx at the shunt (battery or
+     * alternator side per ShuntAtBat) — NOT the internal ADC. */
+    out->amps_batt = ina2xx_current_a();
+    out->bus_v     = ina2xx_bus_v();
 }
 
 /* DMA/ADC IRQ handlers to be routed from stm32f0xx_it.c as needed. */

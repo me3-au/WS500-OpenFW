@@ -6,15 +6,17 @@ set(CMAKE_C_STANDARD 11)
 set(LINKER_SCRIPT ${CMAKE_SOURCE_DIR}/STM32F072xB_FLASH.ld)
 
 # --- Application sources (this repo) ---
+#   Core/  = drivers + BSP + app (HAL-facing)
+#   control/ = pure control core (no HAL; host/Renode testable)
 set(APP_SRC
     Core/Src/main.c
     Core/Src/board.c
     Core/Src/field_drive.c
     Core/Src/sensors.c
     Core/Src/ina2xx.c
-    Core/Src/regulator.c
     Core/Src/config_protocol.c
     Core/Src/can_n2k.c
+    control/Src/control.c
 )
 
 # --- Vendored deps you must add (see Drivers/README.md) ---
@@ -30,6 +32,7 @@ add_executable(${PROJECT_NAME}.elf ${APP_SRC} ${HAL_SRC} ${STARTUP} ${SYSTEM})
 target_compile_definitions(${PROJECT_NAME}.elf PRIVATE STM32F072xB USE_HAL_DRIVER)
 target_include_directories(${PROJECT_NAME}.elf PRIVATE
     Core/Inc
+    control/Inc
     Drivers/STM32F0xx_HAL_Driver/Inc
     Drivers/CMSIS/Device/ST/STM32F0xx/Include
     Drivers/CMSIS/Include
