@@ -5,6 +5,18 @@ on:
   pull_request:
 
 jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build & run control-core unit tests (native gcc)
+        run: |
+          gcc -std=c11 -Wall -Wextra -I control/Inc \
+            control/Src/*.c control/test/*.c \
+            -lm -o control_tests
+          ./control_tests
+
   firmware:
     runs-on: ubuntu-latest
     steps:

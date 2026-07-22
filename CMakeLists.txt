@@ -17,6 +17,8 @@ set(APP_SRC
     Core/Src/config_protocol.c
     Core/Src/can_n2k.c
     control/Src/control.c
+    control/Src/arbitration.c
+    control/Src/field.c
 )
 
 # --- Vendored deps you must add (see Drivers/README.md) ---
