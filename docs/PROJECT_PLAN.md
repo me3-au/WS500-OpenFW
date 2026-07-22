@@ -37,7 +37,11 @@ constrain the code.
 | `SAFETY.md` | Bench-safety rules | ⬜ (rules in §5 here, to extract) |
 | `test-fw/README.md` | Bring-up test firmware spec | ⬜ (spec in §4 here, to extract) |
 | `CLIENT_CONNECTIVITY.md` | Programming/firmware/monitoring across PC/Mac/iOS/Android over USB+CAN (decision) | ✅ |
-| `CAN_TECHNICAL_SPEC.md` / `CAN_USER_GUIDE.md` / `USER_GUIDE.md` / `TEST_PLAN.md` | see deliverables | ⬜ |
+| `QUICK_START.md` | Get-going guide (flash, connect, pick profile, run) | 🔨 draft |
+| `USER_MANUAL.md` | User manual + algorithm explanation (how the regulator decides) | 🔨 draft |
+| `CAN_INTEGRATION.md` | CAN/NMEA2000 integration (Tx telemetry, Rx BMS/DVCC/engine, sync) | 🔨 draft |
+| `OPEN_SOURCE.md` | Project overview, architecture, provenance, build/test, contributing | 🔨 draft |
+| `TEST_PLAN.md` | see deliverable #13 | ⬜ |
 
 > The old plan named a single `SOFTWARE_DESIGN_SPEC.md` that was never written; that role is
 > filled by `CONTROL_SPEC_NEXTGEN.md` + `PROFILE_SPEC_LFP.md`. Remaining design gaps to fold
