@@ -88,7 +88,15 @@ gen-4 (WS500) is the closed commercial port. This materially de-risks the projec
   on 12 V systems). The "two N-ch FETs, P/N-type via jumpers" topology is schematic/blog
   sourced only — not verifiable from code. Upstream runs field PWM at **122 Hz on AVR** (with
   an explicit ">400 Hz is lossy" comment) and **244 Hz on the 2018 STM32 prototype**
-  (cubeMX-set) — resolve against our 1 kHz assumption (§0.6 V2) before bench field tests.
+  (cubeMX-set); the WS500 itself runs **~400 Hz per Al Thomason (verbal, ~2024 phone call
+  with the project owner)** — our driver default is now 400 Hz, with §0.6 V2 confirming
+  from the binary before bench field tests. **Rotor back-EMF is
+  dumped through snubber/freewheel diodes** (reported): the field current free-wheels during
+  PWM off-time, so with the rotor's long L/R time constant (~4 Ω, high inductance) the rotor
+  current is well-smoothed at these frequencies and the **average-voltage duty model behind
+  the rotor clamp (duty ≈ V_rotor_rated / V_bus) is physically valid**. Verify the diode
+  arrangement at the bench (board-level fact); it does not protect against alternator
+  load dump — that remains battery-connected-only territory (§5).
 - **Hardware license: CC BY-SA 4.0 is *reported, not substantiated in the clone*** —
   `alt-CAD` carries **no license file**; the claim traces to the external
   [hardware design overview blog](https://arduinoalternatorregulator.blogspot.com/2010/06/hardware-design-overview.html).
@@ -152,7 +160,7 @@ clash, V3 — evolution can't excuse an impossible decode).
 | # | Claim to re-verify | Method | What it settles | Status |
 |---|---|---|---|---|
 | V1 | Pin map: which GPIO ports/pins are actually RCC-clocked + `GPIO_Init`'ed | re-derive from binary (MSP-init at `0x08002AEC`) | package question (GPIOD/E referenced-vs-used contradiction, IO_COVERAGE lines 8 vs 49); the DIP-pin contradiction (PA4/PA5/PA6/PB0/PB1 marked ✅ in IO_COVERAGE but absent from HW-spec §6b roster); **TIM1 BKIN pin** (listed ✅ but never identified — our `field_drive.c` already relies on it); TIM2 capture channel/pin | ⬜ |
-| V2 | **Field PWM frequency** — "1 kHz-class" in IO_COVERAGE is unsourced; upstream VSR uses **122 Hz** (">400 Hz lossy"); our `field_drive.c` hard-codes 1 kHz | recover stock TIM1 ARR/PSC from binary or Renode boot | the frequency our field driver should use; gates bench field tests | ⬜ |
+| V2 | **Field PWM frequency** — "1 kHz-class" in IO_COVERAGE was unsourced. Priors converge on hundreds of Hz: **122 Hz** AVR (">400 Hz lossy" comment), **244 Hz** 2018 STM32 prototype, and **~400 Hz for the WS500 — verbal from Al Thomason (the designer), ~mid-2024 phone call, recalled 2026-07** (first-party but unwritten; below binary/bench in the hierarchy). `field_drive.c` default **changed 1 kHz → 400 Hz** (2026-07-23) on that basis; V2 stays open to confirm from the stock TIM1 config | recover stock TIM1 ARR/PSC from binary or Renode boot; Stage-A scope on the field wire (§5) is the bench-grade closure | confirms/corrects the 400 Hz driver default; gates bench field tests | 🔨 |
 | V3 | INA "auto-detect INA226/228/238" — internally inconsistent: cited register map (0x01 SHUNT_V / 0x02 BUS_V / 0x03 POWER / 0xFF DIE_ID) is **INA226-only**; INA228/238 use a different map (VSHUNT 0x04, DEVICE_ID 0x3F) | re-examine I²C driver disassembly vs all three datasheets | which part(s) the stock FW really supports; correct register map for our `ina2xx.c` | ⬜ |
 | V4 | §6b AF assignments; "×4 oversample" | STM32F072 datasheet AF table (note the forcing argument: USB owns PA11/12 ⇒ CAN *must* be PB8/9); RM0091 (F072 has **no HW oversampler** → confirm software averaging at `0x08014242`) | independent confirmation of pin map; correct wording | ⬜ |
 | V5 | Mine the upstream `CPU_STM32` block (`SmartRegulator.h` v1.3.1) for WS500 facts | done 2026-07-23 | **Done — see outcome note below.** Corroborated: TIM1_CH1 field PWM, TIM2-as-µs-counter stator method, INA226 @0x40 regs 0x01/0x02 (+CONFIG 0x00 = `0x4523`, STATUS 0x06, 2.5 µV shunt LSB), IWDG use, 8 DIP inputs, Feature-In/Out, MCU family (alt target STM32F078xx). Upstream-silent: all GPIO pins (cubeMX-generated, not in source), BKIN, CH3N. New: prototype field PWM = **244 Hz**; config in **external I²C EEPROM @0x50**; **β3380 = FET temp, not battery** | ✅ |
@@ -206,7 +214,7 @@ if the pre-2015 license history ever matters.
 | 16 | **License + third-party NOTICE** | **LICENSE = MIT** ✅ + `NOTICE` ✅ (CMSIS Apache-2.0 / HAL BSD-3 / NMEA2000 MIT-planned; Thomason courtesy attribution; **no GPL code in-tree — VSR is reference-only**); README/OPEN_SOURCE license text aligned | **M0 (now)** | ✅ |
 | 17 | **OSS hygiene** | `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue/PR templates, README badges | M0 | ⬜ |
 | 18 | **Versioning + release** | `VERSION`/macro, `CHANGELOG.md`, tag/release flow | M0→M6 | ⬜ |
-| 19 | **Emulation harness** | Renode model (STM32F072 + peripherals + INA stub) for hardware-free dev/CI | M0→M1 | ⬜ |
+| 19 | **Emulation harness** | Renode model (STM32F072 + peripherals + INA stub) for hardware-free dev/CI; part of the §8 virtual-first strategy with the SIL plant sim (8.1) | M0→M1 | ⬜ |
 | 20 | **Telemetry / logging** | log stream over USB CDC / CAN (per `CONTROL_SPEC`) | M4–M5 | ⬜ |
 | 21 | **Robustness / error reporting** | §7: safe-state funnel, IWDG checkpoint policy, reset-cause + `.noinit` crash records, HardFault/NMI handlers, flash CRC + SRAM parity, PVD brown-out, peripheral error budgets | M3–M4 | ⬜ |
 
@@ -262,7 +270,7 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
 | Wrong INA2xx scaling → bad current | unsafe charging | bench-verify against a reference meter (M2/M3); emulation cross-check |
 | Field-driver damage | hardware loss | dummy load, 20 % duty cap in test builds, TIM1 BKIN cutoff, current-limited supply (§5) |
 | Accidental GPL ingestion (would forfeit the MIT/permissive goal) | legal/OSS | LICENSE+NOTICE done (#16 ✅); no-GPL-in-tree rule (§0.5); dependency additions require a license check |
-| Single irreplaceable unit | any HW test is high-stakes | emulation-first (#19); dry-run risky tests in Renode; golden stock image |
+| Single irreplaceable unit — **installed, in service, 48 V bank, 4 Ω/12 V rotor** (§5) | any HW test is high-stakes *and* disrupts a live system; rotor overdrive is the top hazard | virtual-first gauntlet (§8) gates Stage C; staged access ladder (§5): readings-only → config → bench flash; rotor clamp + duty cap proven in SIL first |
 | Control-model drift (code vs spec) | rework, bugs | M2.5 reconciliation; spec is single source of truth |
 | Draft specs with open questions | design churn | track `PROFILE_SPEC` §8 questions as issues; resolve before M3 coding they touch |
 | Research confidence inflation (IO_COVERAGE marks inferred items ✅; specs build on them) | firmware written against wrong hardware facts (BKIN, DIP pins, INA variant) | §0.6 virtual queue V1–V6; downgrade IO_COVERAGE statuses to match evidence |
@@ -296,6 +304,28 @@ Rules, in force until explicitly retired:
 6. **Recovery always one step away** — SWD permanently wired; stock restore rehearsed (M1).
 7. **Exactly one WS500 exists — irreplaceable.** M1 (backup + rehearsed restore) is absolute;
    any test that could plausibly *damage* (not just brick) hardware gets a Renode dry run first.
+
+**Installed-unit reality (2026-07):** the one WS500 is **installed and in service on a 48 V
+system with a 4 Ω (12 V-class) rotor** — it is not a spare bench unit, and any firmware
+mishap also takes down a live charging system. Two consequences:
+
+- **Rotor overdrive is the #1 hazard on this exact install.** A 12 V rotor on a ~48–57.6 V
+  bus means sustained field duty above **≈25 % (≈21 % at 57.6 V absorption)** overdrives the
+  rotor (100 % duty ≈ 12 A / ~580 W into a 3 A winding). The CONTROL_SPEC rotor duty clamp
+  and the never-100 %-duty bootstrap cap (§0.5) are *the* critical protections here, and
+  both must be proven in virtual (§8) before any custom firmware runs on this unit.
+- **Hardware access is staged — readings first:**
+  - **Stage A — observation only (safe now, stock firmware untouched):** USB `$` protocol
+    readout (dump + archive the full stock config — also documents the stock parameter set),
+    CAN bus sniffing (log the PGN set → validates `CAN_INTEGRATION.md`), and scope/DMM on
+    harness wires — field PWM wire (**measures the real PWM frequency: closes §0.6 V2 at
+    the bench level**), stator wire (frequency vs known RPM → K), battery/alt sense vs a
+    reference meter (validates the 34.33:1 divider and INA readings end-to-end).
+  - **Stage B — reversible config interaction:** only after the Stage-A config archive
+    exists; `$` writes are stock-supported and restorable from the dump.
+  - **Stage C — custom firmware:** only after M1 (proven DFU backup/restore) *and* the §8
+    virtual gauntlet passes. First flash happens on the bench (unit temporarily removed),
+    never in-situ.
 
 ## 6. Flash / update / rollback / backup / recovery — *to extract to `FLASH_AND_RECOVERY.md`*
 
@@ -365,3 +395,32 @@ stack-limit registers — so protection is layered and every failure path funnel
 *Milestone hooks:* M3 exit adds "IWDG active; induced HardFault provably lands in safe state
 + crash record + clean reboot." M4 adds the flash black-box + `ws500ctl` readout of crash
 records and reset counters.
+
+## 8. Virtual-first test strategy (decided 2026-07) — maximize testing before hardware
+
+Policy: **everything that can be proven without the unit, is** — the only WS500 is live on
+a 48 V system (§5). Four virtual layers, cheapest first; all run in CI:
+
+- **8.1 SIL — simulated charge cycles against a plant model.** `control/` is pure and
+  HAL-free by design, so drive `ctrl_tick()` natively against a simple plant: LFP battery
+  model (OCV/SOC curve, internal resistance, thermal mass), alternator model (output vs RPM
+  × field duty, belt/pulley), harness delays. Scenarios: full CHARGE→REST cycles at 16S/48 V,
+  cold/hot temp comp, BMS ceiling steps, engine-speed transients, load dump, sensor dropout
+  and implausible-value injection, **rotor-clamp verification with this exact install's
+  parameters (4 Ω / 12 V rotor on 48–57.6 V bus → duty ceiling ≈25 %/≈21 %)**, and
+  long-soak (accelerated time) for state-machine leaks. This is the main gauntlet — a
+  regression suite, not a demo.
+- **8.2 Renode — whole-firmware emulation (#19).** STM32F072 machine model + INA226 I²C
+  stub + CAN loopback: boot the real ELF, exercise `main()`'s loop, fault paths (§7:
+  induced HardFault → safe state + crash record), watchdog starvation, and DFU-adjacent
+  boot behavior. Also dry-runs any risky bench procedure first (§5 rule 7).
+- **8.3 Stock-binary verification (§0.6 V1–V4, V6–V8).** Every RE fact our drivers depend
+  on gets re-derived or refuted before the driver is trusted (BKIN, PWM frequency, INA
+  register map, config storage, β3380 channel identity).
+- **8.4 Property/fault-injection tests on the pure core.** Extend `control/test/` beyond
+  example-based: sweep-based invariant checks (field ≤ clamp under *all* input
+  combinations; faults latch; arbitration monotonicity), boundary sweeps on profile
+  parameters, and randomized sensor-noise runs with fixed seeds.
+
+*Gate:* Stage C in §5 (first custom-firmware flash) requires 8.1–8.4 green in CI, plus the
+§0.6 queue resolved for every constant the flashed build uses.
