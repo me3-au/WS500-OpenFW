@@ -180,11 +180,21 @@ with RPM:
 P_belt(rpm) = (T_belt × 2π × rpm_alt / 60) × η_alt
 ```
 
-Configured either as `T_belt` (Nm at the alternator shaft) or, more
-installer-friendly, as **amps at a reference RPM** (`A_ref @ rpm_ref`), from
-which `T_belt` is derived once. The resulting ceiling is near-zero at idle and
-grows with speed — which matches observed belt behavior and replaces any
-fixed "belt load %" guesswork. Requires an RPM source; with RPM LOST the belt
+Configured as `T_belt` (Nm at the shaft, physically exact) or — cleaner and
+unit-consistent — as **power at a reference RPM** (`W_ref @ rpm_ref`). The curve is
+linear through the origin, so one `(W, RPM)` point defines it entirely:
+
+```
+P_belt(rpm) = W_ref × (rpm / rpm_ref)
+```
+
+**Power, not amps, is the right anchor.** Belt load is torque × speed = shaft power
+(≈ electrical power ÷ efficiency), and unlike amps it is **voltage-independent** — the
+belt doesn't care whether the alternator is 12 V or 48 V, only how much power passes
+through the pulley (200 A is ~2.7 kW at 12 V but ~11 kW at 48 V — a useless belt unit).
+Watts also matches the arbitration domain (§2). The resulting ceiling is near-zero at
+idle and grows with speed — matching observed belt behavior and replacing any fixed
+"belt load %" guesswork. Requires an RPM source; with RPM LOST the belt
 ceiling falls back to its idle-RPM value (conservative).
 
 **Slip-adaptive trim.** The belt-slip detector (§3.3 — transient

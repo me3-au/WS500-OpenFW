@@ -265,7 +265,7 @@ values (control spec §1.4).
     "battery_c_limit": 0.5,          // C-rate
     "wiring_limit_a": 250,           // total A, charge path
     "alternator_limit_a": 220,       // absolute rectifier/stator A
-    "belt": { "a_ref": 150, "rpm_ref": 4000 },  // or {"torque_nm": ...}; slip-adaptive, §2.2
+    "belt": { "w_ref": 4000, "rpm_ref": 4000 },  // power @ ref RPM (or {"torque_nm": ...}); slip-adaptive, §2.2
     "warmup": { "coolant_c": 60, "cold_power_pct": 40, "cold_c": 20 },  // §2.3, optional
     "field": { "rotor_rated_v": 12, "rotor_v_max": null, "allow_full_field_48v": false }  // §5.1 — v1 duty-clamp mode (WS500 hw has no rotor current sense)
   },
@@ -346,8 +346,9 @@ whole block.
    warmup. Reasonable for lock/marina stop-start?
 7. **Tier-2 latency bound** (NMEA current ≤ 2 s for tail exit): strict enough
    for a 60 s-damped decision? Could likely relax to 5 s.
-8. **Belt limit entry unit** (control spec §2.2): torque in Nm is physically
-   right but installer-hostile; `A_ref @ rpm_ref` is friendlier but assumes the
-   installer knows a safe operating point. Ship both? And: is the 10 %
-   immediate trim + slow decay the right slip-response shape, or should first
-   slip freeze the ceiling at 90 % of the slip point until manual reset?
+8. **Belt limit entry unit** (control spec §2.2): **resolved — anchor is power at a
+   reference RPM (`W_ref @ rpm_ref`)**, not amps (amps is voltage-dependent, so a poor
+   belt unit; power is voltage-independent and matches the Watts arbitration). Torque
+   (Nm) offered as the exact alternative. Remaining open: is the 10 % immediate trim +
+   slow decay the right slip-response shape, or should first slip freeze the ceiling at
+   90 % of the slip point until manual reset?
