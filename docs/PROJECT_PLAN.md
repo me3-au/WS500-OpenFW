@@ -159,14 +159,14 @@ clash, V3 — evolution can't excuse an impossible decode).
 
 | # | Claim to re-verify | Method | What it settles | Status |
 |---|---|---|---|---|
-| V1 | Pin map: which GPIO ports/pins are actually RCC-clocked + `GPIO_Init`'ed | re-derive from binary (MSP-init at `0x08002AEC`) | package question (GPIOD/E referenced-vs-used contradiction, IO_COVERAGE lines 8 vs 49); the DIP-pin contradiction (PA4/PA5/PA6/PB0/PB1 marked ✅ in IO_COVERAGE but absent from HW-spec §6b roster); **TIM1 BKIN pin** (listed ✅ but never identified — our `field_drive.c` already relies on it); TIM2 capture channel/pin | ⬜ |
-| V2 | **Field PWM frequency** — "1 kHz-class" in IO_COVERAGE was unsourced. Priors converge on hundreds of Hz: **122 Hz** AVR (">400 Hz lossy" comment), **244 Hz** 2018 STM32 prototype, and **~400 Hz for the WS500 — verbal from Al Thomason (the designer), ~mid-2024 phone call, recalled 2026-07** (first-party but unwritten; below binary/bench in the hierarchy). `field_drive.c` default **changed 1 kHz → 400 Hz** (2026-07-23) on that basis; V2 stays open to confirm from the stock TIM1 config | recover stock TIM1 ARR/PSC from binary or Renode boot; Stage-A scope on the field wire (§5) is the bench-grade closure | confirms/corrects the 400 Hz driver default; gates bench field tests | 🔨 |
-| V3 | INA "auto-detect INA226/228/238" — internally inconsistent: cited register map (0x01 SHUNT_V / 0x02 BUS_V / 0x03 POWER / 0xFF DIE_ID) is **INA226-only**; INA228/238 use a different map (VSHUNT 0x04, DEVICE_ID 0x3F) | re-examine I²C driver disassembly vs all three datasheets | which part(s) the stock FW really supports; correct register map for our `ina2xx.c` | ⬜ |
-| V4 | §6b AF assignments; "×4 oversample" | STM32F072 datasheet AF table (note the forcing argument: USB owns PA11/12 ⇒ CAN *must* be PB8/9); RM0091 (F072 has **no HW oversampler** → confirm software averaging at `0x08014242`) | independent confirmation of pin map; correct wording | ⬜ |
+| V1 | **Pin map — RESOLVED from the stock binary (2026-07-23).** All 17 `HAL_GPIO_Init` sites + RCC AHBENR decoded. **PACKAGE = 64-pin LQFP64 (STM32F072RB)** — only GPIOA/B/C clocked (D/E never), and PC4/PC5/PC10 are configured (don't exist on 48-pin CB); refutes both the 48-pin and the 100-pin guesses. Confirmed: PA8/PB15 TIM1_CH1/CH3N AF2, CAN PB8/9 AF4, I2C1 PB6/7 + I2C2 PB10/11 AF1, USB peripheral live. **BKIN REFUTED** (no break AF pin — corroborates V2; cutoff is software). **DIP inputs CONFIRMED**: PA4/5/6 **+PA7** and PB0/1 **+PB2**, all pull-up (resolves the doc conflict, adds two undocumented). **Stator = PA10 via EXTI rising-edge (was 🔴)**, not a TIM2 channel — EXTI counts edges + diffs TIM2->CNT. PB13 = enable/feature input (polled). Only **6 live IRQs**: EXTI4_15, DMA1_CH1, ADC, **TIM7 (system tick)**, CAN, USB — I²C/CAN move by poll/DMA | stock binary (done) | package, DIP pins, BKIN, stator pin all settled; feeds board.h/HW-spec corrections | ✅ |
+| V2 | **Field PWM frequency — RESOLVED from the stock binary (2026-07-23).** `MX_TIM1_Init` @0x08005024: PSC=**326**, ARR=**1024**, TIM1CLK=48 MHz (HSE 8×6=48; APB÷2 → timer doubler) → **143.2 Hz, 10-bit duty**. Not 400/244/122. The verbal "~400 Hz" (Al, 2024) was imprecise memory / the loss ceiling, not the setpoint. `field_drive.c` **corrected 400 → 143 Hz** (PSC=326, FIELD_PWM_MAX=1024) to mirror the stock field-driver tuning. **Also found:** TIM1 channels = CH1 (PA8 field) + CH3/CH3N (PB15) both configured; **BDTR BKE=0 → stock does NOT use hardware BKIN** (field cutoff is software MOE-clear); **TIM2 = plain free-running 32-bit counter @ ~979.6 kHz (1.02 µs/tick), NOT input capture** — stator period is software CNT-diffing | stock binary (done); Stage-A scope on field wire = bench confirmation | 400 Hz driver default corrected to 143 Hz; BKIN + TIM2-capture claims refuted | ✅ |
+| V3 | **INA driver — RESOLVED from the stock binary (2026-07-23).** The FW drives **INA226 only**, hardwired: reader `0x800B530` reads regs **0x06** (Mask/Enable, conversion-ready gate), **0x02** (bus V), **0x01** (shunt V), 16-bit big-endian, on **I²C1 @ 0x40**. **Auto-detect is REFUTED** — the die-IDs 0x2260/0x2280/0x2380 and mfr 0x5449 don't exist in the image, no ID register (0xFF/0x3F) is ever read, no detection table. The HW-spec "INA226/228/238 auto-detect" paragraph is fiction — strike it. **CALIBRATION is computed at runtime from the shunt ratio** (not a magic constant) — our `ina2xx.c` must derive CALIB from the configured shunt, not copy 0x4523. Also: the "0x0C/0x10/0x4C secondary I²C cluster" is **REFUTED** — those were length/size args misread as addresses | stock binary (done) | INA part + register map + CALIB strategy settled for `ina2xx.c` | ✅ |
+| V4 | **ADC scaling — RESOLVED from the stock binary (2026-07-23).** 7-ch scan, **×4 software averaging** (routine `0x08014242`; F072 has no HW oversampler — confirmed), **12-bit** (FS 4095). Constants: **β3950** (PA1/PA2) and **β3380** (PA3) stored as *integer* literals (why the earlier float search missed them); **34.3333** divider + **3.3** Vref (PC5, FS ≈113.3 V); **10 kΩ** NTC pull-up. NTC = Beta/Steinhart (`logf`); voltage = linear. AF pin map independently matches V1 | stock binary (done) | scaling constants confirmed for our `sensors.c`; "×4 oversample" wording corrected | ✅ |
 | V5 | Mine the upstream `CPU_STM32` block (`SmartRegulator.h` v1.3.1) for WS500 facts | done 2026-07-23 | **Done — see outcome note below.** Corroborated: TIM1_CH1 field PWM, TIM2-as-µs-counter stator method, INA226 @0x40 regs 0x01/0x02 (+CONFIG 0x00 = `0x4523`, STATUS 0x06, 2.5 µV shunt LSB), IWDG use, 8 DIP inputs, Feature-In/Out, MCU family (alt target STM32F078xx). Upstream-silent: all GPIO pins (cubeMX-generated, not in source), BKIN, CH3N. New: prototype field PWM = **244 Hz**; config in **external I²C EEPROM @0x50**; **β3380 = FET temp, not battery** | ✅ |
 | V6 | Boot the stock image in Renode (#19); log peripheral writes (TIM1 config, ADC scan setup, I²C traffic to 0x40 **and 0x50**) | dynamic corroboration of V1–V3, V7 | | ⬜ |
-| V7 | **Config storage location** — upstream STM32 stores config in an **external I²C EEPROM @ 0x50** (M24C04-family, 16-byte pages, on the same bus as the INA226); RE guessed "internal flash likely" (IO_COVERAGE line 42) and the unknown-I²C list (0x0C/0x10/0x4C) doesn't include 0x50 | re-scan the binary's I²C address literals + `FLASH_IF` call sites; Renode I²C trace | where config lives (drives the M4 config-store design — flash page vs EEPROM driver) | ⬜ |
-| V8 | **β3380 channel identity** — upstream defines Beta 3380 as the **onboard FET/driver temp** sensor, *not* battery; our RE labels PA3 (β3380) "battery-class"/BTS | re-check the PA3 conversion/clamps + how the harness BTS input is digitized; upstream NTC constants (10 K feed, 100 Ω ground-iso on external probes only) may distinguish onboard vs harness channels | which ADC channel is really battery temp — **feeds temp-comp and CONTROL_SPEC §5.1 rotor protection**; a swap here would mis-compensate charge voltage | ⬜ |
+| V7 | **Config storage — narrowed (2026-07-23), one loose end.** From the stock binary: EEPROM @0x50 **REFUTED** (no 0xA0 transactions); **internal-flash programming REFUTED** (FLASH unlock keys 0x45670123/0xCDEF89AB and KEYR/CR/SR writes are entirely absent — and flash-write *code* would be in the shipped image, which is complete, so its absence is conclusive). **Prime suspect: the I²C2 device** — I²C2 is a second inited bus (handle 0x20002A20, different TIMINGR) running an **interrupt-driven ~300-byte peripheral** that toggles a GPIOA line; C read it as a display/aux but it's the only remaining persistence path and 300 bytes fits a config blob. **Loose end:** identify the I²C2 device 7-bit address + whether it's read at boot / written on `$` config change (→ EEPROM/FRAM = config store, vs display). Cross-check: a serial power-cycle test (read config, cycle, re-read) proves persistence exists | disassemble the I²C2 driver `0x8014050`/`0x8014084` for its DevAddress; Stage-A serial persistence test | resolves the M4 config-store design (I²C EEPROM/FRAM driver vs other) | 🔨 |
+| V8 | **β3380 channel identity — RESOLVED from the stock binary (2026-07-23), confidence med-high.** PA3/β3380 is the **FET/driver over-temp sensor, NOT battery**: its result (`0x200003E0`) drives a **125 °C over-temp fault** (`0x4029`), an over-temp status classifier, and telemetry — and **nothing feeds any `V_target += k·(Tref−T)` temp-comp**. Battery temp for temp-comp arrives over **CAN/BMS**, not the local ADC (agrees with upstream VSR; refutes our "BTS" label). **Design consequence:** our temp-comp must source battery temp from CAN (or a correctly-identified harness input), and PA3 belongs to the **thermal governor** (`thermal.c`), not temp-comp. β3950 (PA1/PA2, 160 °C clamp) are the alternator/hot-probe channels | stock binary (done) | corrects the sensor labelling; **redirects temp-comp sourcing and CONTROL_SPEC §5.1** | ✅ |
 
 **V5 outcome note (2026-07-23):** the upstream `CPU_STM32` block is a **skeletal 2018
 prototype** (HW "1.0.0", 2018-07-29) — field PWM, CAN, USB CDC, EEPROM config, and DIP read
@@ -184,11 +184,30 @@ upstream counterpart).
 analog resistor values (only ratios are in FW), which of PA1/PA2 = ATS vs internal (identical
 β in FW), RDP level, SWD/BOOT0 access — correctly scoped 🔵 in `IO_COVERAGE.md`.
 
-**Doc corrections owed** (tracked, not yet applied): downgrade IO_COVERAGE ✅ items (BKIN,
-DIP pins, "1 kHz", INA auto-detect) to match evidence; reconcile HW-spec §6b roster vs
-IO_COVERAGE DIP claims after V1; CONTROL_SPEC §5.1 to note its dependency on the inferred
-internal NTC and to add the bootstrap max-duty cap (§0.5); re-clone VSR upstream unshallow
-if the pre-2015 license history ever matters.
+**Doc corrections owed** (tracked, not yet applied to HW-spec/IO_COVERAGE — binary now
+settles most of them):
+- **Package: STM32F072RB, LQFP64** (V1) — replace the "package TBD / 48 vs 100-pin" language
+  in HW-spec §2/§7 and IO_COVERAGE lines 6–8/49 with the confirmed 64-pin part.
+- **Field PWM = 143.2 Hz** (V2) — replace IO_COVERAGE's unsourced "1 kHz-class".
+- **BKIN not used** (V1+V2) — downgrade IO_COVERAGE's ✅ "TIM1 BKIN field fault cutoff";
+  stock cutoff is software MOE-clear. (Our firmware keeps BKIN only as an optional
+  improvement, valid only if a fault comparator is wired — pin not routed in stock.)
+- **Stator = PA10 / EXTI rising edge + TIM2 timebase** (V1+V2) — correct "TIM2 input
+  capture" in HW-spec §6c line 177 / IO_COVERAGE line 25 (was 🔴 pin).
+- **DIP inputs = PA4/5/6/7 + PB0/1/2, pull-up** (V1) — reconcile the HW-spec §6b roster
+  with IO_COVERAGE's ✅; add the newly-found PA7/PB2.
+- **System tick = TIM7** (V1); active peripheral set = ADC+DMA, CAN, USB, TIM7, EXTI only.
+- **INA226 only, no auto-detect** (V3) — strike the HW-spec §6c "INA226/228/238 auto-detect
+  via die-ID" paragraph; regs 0x01/0x02/0x06 big-endian @0x40 on I²C1; CALIB from shunt.
+- **Config store is NOT internal flash and NOT EEPROM@0x50** (V7) — remove IO_COVERAGE's
+  "internal flash likely (FLASH_IF)"; the store is the I²C2 device (address TBD). This also
+  revises §6 FLASH_AND_RECOVERY assumptions (config lives off-chip, not in a flash page).
+- **β3380/PA3 = FET/driver temp, not BTS** (V8) — relabel HW-spec §6b/§6c; temp-comp sources
+  battery temp from CAN.
+- Still open: CONTROL_SPEC §5.1 internal-NTC dependency + bootstrap max-duty cap (§0.5);
+  re-clone VSR upstream unshallow if pre-2015 license history ever matters.
+- **Update our own `board.h`**: STATOR path is EXTI10 (PA10), not a TIM2 capture channel;
+  the `STATOR_TIM = TIM2` define is the timebase, and RPM will be EXTI-edge + CNT-diff.
 
 ## 1. Deliverables map
 
@@ -355,6 +374,12 @@ stack-limit registers — so protection is layered and every failure path funnel
   (TIM1 `BDTR.MOE = 0` + duty 0 + pin low), minimal code, no HAL, callable from any context
   including fault handlers with a corrupt stack. Every mechanism below lands here. The
   hardware backstop beneath it is TIM1 **BKIN** (pin still to be identified — §0.6 V1).
+> *Stock prior art (V4/binary):* the stock WS500 uses **IWDG non-windowed, max reload
+> (RLR=4095), PR=7 (÷256) ≈26 s at boot and PR=4 (÷64) ≈6.5 s on fault re-arm paths**, with
+> `DBG_IWDG_STOP` set for debugger freeze. It **does not read RCC→CSR reset-cause** (tracks
+> resets via a `0xDEADBEEF` RAM marker instead) and has **no PVD/brown-out**. Our §7 below
+> deliberately improves on all three (windowed + shorter reload, real reset-cause decode, PVD).
+
 - **R1 — IWDG, checkpoint-kicked.** IWDG (independent LSI clock — survives main-clock
   failure), **windowed** mode (F0 IWDG has `WINR` — catches runaway-fast loops too). Kicked
   from the main loop **only** when every subsystem checkpoint bit (control tick, sensor

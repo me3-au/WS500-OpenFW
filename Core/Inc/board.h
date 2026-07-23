@@ -27,9 +27,10 @@
 #define FIELD_PWMN_PORT        GPIOB
 #define FIELD_PWMN_PIN         GPIO_PIN_15
 #define FIELD_PWMN_AF          GPIO_AF2_TIM1
-/* PWM timer resolution; 0..FIELD_PWM_MAX = 0..100% duty. With the 1 MHz timer
- * clock in field_drive.c this also sets the PWM frequency: 2500 -> 400 Hz. */
-#define FIELD_PWM_MAX          2500U
+/* PWM timer resolution; 0..FIELD_PWM_MAX = 0..100% duty. Also sets the PWM period:
+ * with PSC in field_drive.c giving a 146.8 kHz timer clock, 1024 -> 143.2 Hz,
+ * mirroring the stock WS500 (10-bit field duty). See PROJECT_PLAN §0.6 V2. */
+#define FIELD_PWM_MAX          1024U
 
 /* ---- Analog sensing (ADC1, 7-ch scan, x4 oversample+average) --------------- *
  * External inputs, in ascending channel order (== DMA buffer index order):
