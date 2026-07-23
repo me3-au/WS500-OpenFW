@@ -3,7 +3,7 @@
 > **Status:** draft. Project overview + contributor guide.
 
 Open-source replacement firmware for the **Wakespeed WS500** alternator-regulator
-hardware. GPL-3.0. Built for LiFePO4-first, two-stage charging with everything in real
+hardware. MIT-licensed. Built for LiFePO4-first, two-stage charging with everything in real
 units.
 
 ---
@@ -24,10 +24,12 @@ profiles). No legacy concept is carried forward "because that's how it was done.
 
 ## 2. Provenance & licensing
 
-- **This firmware: GPL-3.0-or-later.**
-- **Upstream lineage:** Al Thomason's VSR — **software GPL-3.0**, **hardware CC BY-SA 4.0**
-  (pre-2015 releases were CC BY-NC-SA — not used). Any reused VSR code must keep its GPL
-  headers and **attribute William A. Thomason**; reused hardware design is CC BY-SA.
+- **This firmware: MIT** (decided 2026-07; see `PROJECT_PLAN.md` §0.5). Consequence:
+  **no GPL code in-tree, ever** — the VSR source is reference and validation only.
+- **Upstream lineage:** Al Thomason's VSR — **software GPL-3.0-or-later**; hardware license
+  reportedly CC BY-SA 4.0 (unverified — the CAD repo carries no license file); pre-2015
+  releases reportedly CC BY-NC-SA (unverified) — none of it is used as code. Courtesy
+  attribution to **William A. Thomason** is in `NOTICE`.
 - **Hardware interface** (pin map, sensors, INA current path) was recovered by **black-box
   analysis of the compiled stock firmware** — interface fact, not copied expression. The
   WS500's proprietary STM32 firmware is **not** used.
@@ -113,11 +115,13 @@ Milestones and the deliverables map live in `PROJECT_PLAN.md`.
   control path.
 - Match the authoritative specs; if you change behavior, change the spec too.
 - One logical change per PR; CI (tests + firmware) must be green.
-- By contributing you agree your work is licensed GPL-3.0-or-later.
+- By contributing you agree your work is licensed MIT, and that it contains **no GPL code**
+  (including from the VSR upstream — reference only; anything resembling a paste gets
+  independently rewritten).
 
 ## 9. Safety & liability
 
 This is **experimental firmware for a safety-relevant device** (it drives real charging
 current). It ships fail-safe (field off), but **you are responsible** for validating any
 configuration on your hardware. Bench-test on a current-limited supply into a dummy load
-before connecting a real alternator (`SAFETY.md`). No warranty — see the GPL.
+before connecting a real alternator (`SAFETY.md`). No warranty — see the MIT license.

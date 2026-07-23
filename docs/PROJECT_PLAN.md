@@ -86,9 +86,9 @@ gen-4 (WS500) is the closed commercial port. This materially de-risks the projec
   duty is forbidden by the hardware**. Our field module must carry an equivalent compiled
   max-duty cap (CONTROL_SPEC open item; the rotor voltage clamp alone doesn't guarantee it
   on 12 V systems). The "two N-ch FETs, P/N-type via jumpers" topology is schematic/blog
-  sourced only — not verifiable from code. Upstream runs field PWM at **122 Hz** with an
-  explicit ">400 Hz is lossy" comment — resolve against our 1 kHz assumption (§0.6 V2)
-  before bench field tests.
+  sourced only — not verifiable from code. Upstream runs field PWM at **122 Hz on AVR** (with
+  an explicit ">400 Hz is lossy" comment) and **244 Hz on the 2018 STM32 prototype**
+  (cubeMX-set) — resolve against our 1 kHz assumption (§0.6 V2) before bench field tests.
 - **Hardware license: CC BY-SA 4.0 is *reported, not substantiated in the clone*** —
   `alt-CAD` carries **no license file**; the claim traces to the external
   [hardware design overview blog](https://arduinoalternatorregulator.blogspot.com/2010/06/hardware-design-overview.html).
@@ -131,14 +131,46 @@ hardware** — by static disassembly of the stock binary, datasheet cross-checks
 (#19), and the upstream `CPU_STM32` block (§0.5). Work them before the bench milestones
 they feed.
 
+**Evidence precedence for WS500 facts** (the VSR predates the WS500 — the compiled stock
+firmware is a *later derivative*, so lineage runs AVR → 2018 STM32 prototype → production
+WS500 binary):
+
+1. **Bench measurement** on the real unit (physical ground truth);
+2. **the stock WS500 binary** (it *is* the product — its constants define what the shipped
+   firmware assumes about the board);
+3. **upstream STM32 prototype** (ancestral prior — useful where the binary is silent or our
+   decode is ambiguous, stale where the product evolved);
+4. **AVR gen-3 source** (older prior still — algorithm shapes and conventions).
+
+So an upstream↔RE mismatch (34.33:1 vs ~2:1 divider, INA auto-detect vs hardcoded INA226)
+is **expected evolution, not an RE error** — the binary wins. Upstream priors still bite in
+two places: where our claim **isn't from the binary at all** (the unsourced "1 kHz" — both
+upstream data points say hundreds of Hz, so V2 must read the real TIM1 config), and where
+our **own reading of the binary is internally inconsistent** (the INA register-map/auto-detect
+clash, V3 — evolution can't excuse an impossible decode).
+
 | # | Claim to re-verify | Method | What it settles | Status |
 |---|---|---|---|---|
 | V1 | Pin map: which GPIO ports/pins are actually RCC-clocked + `GPIO_Init`'ed | re-derive from binary (MSP-init at `0x08002AEC`) | package question (GPIOD/E referenced-vs-used contradiction, IO_COVERAGE lines 8 vs 49); the DIP-pin contradiction (PA4/PA5/PA6/PB0/PB1 marked ✅ in IO_COVERAGE but absent from HW-spec §6b roster); **TIM1 BKIN pin** (listed ✅ but never identified — our `field_drive.c` already relies on it); TIM2 capture channel/pin | ⬜ |
 | V2 | **Field PWM frequency** — "1 kHz-class" in IO_COVERAGE is unsourced; upstream VSR uses **122 Hz** (">400 Hz lossy"); our `field_drive.c` hard-codes 1 kHz | recover stock TIM1 ARR/PSC from binary or Renode boot | the frequency our field driver should use; gates bench field tests | ⬜ |
 | V3 | INA "auto-detect INA226/228/238" — internally inconsistent: cited register map (0x01 SHUNT_V / 0x02 BUS_V / 0x03 POWER / 0xFF DIE_ID) is **INA226-only**; INA228/238 use a different map (VSHUNT 0x04, DEVICE_ID 0x3F) | re-examine I²C driver disassembly vs all three datasheets | which part(s) the stock FW really supports; correct register map for our `ina2xx.c` | ⬜ |
 | V4 | §6b AF assignments; "×4 oversample" | STM32F072 datasheet AF table (note the forcing argument: USB owns PA11/12 ⇒ CAN *must* be PB8/9); RM0091 (F072 has **no HW oversampler** → confirm software averaging at `0x08014242`) | independent confirmation of pin map; correct wording | ⬜ |
-| V5 | Mine the upstream `CPU_STM32` block (`SmartRegulator.h` v1.3.1) for WS500 facts: pin/port defines, scaler constants, `FIELD_PWM_MAX 0xFE`, stator on `htim2` | diff against our RE findings | free corroboration/contradiction for V1–V3 | ⬜ |
-| V6 | Boot the stock image in Renode (#19); log peripheral writes (TIM1 config, ADC scan setup, I²C traffic to 0x40) | dynamic corroboration of V1–V3 | | ⬜ |
+| V5 | Mine the upstream `CPU_STM32` block (`SmartRegulator.h` v1.3.1) for WS500 facts | done 2026-07-23 | **Done — see outcome note below.** Corroborated: TIM1_CH1 field PWM, TIM2-as-µs-counter stator method, INA226 @0x40 regs 0x01/0x02 (+CONFIG 0x00 = `0x4523`, STATUS 0x06, 2.5 µV shunt LSB), IWDG use, 8 DIP inputs, Feature-In/Out, MCU family (alt target STM32F078xx). Upstream-silent: all GPIO pins (cubeMX-generated, not in source), BKIN, CH3N. New: prototype field PWM = **244 Hz**; config in **external I²C EEPROM @0x50**; **β3380 = FET temp, not battery** | ✅ |
+| V6 | Boot the stock image in Renode (#19); log peripheral writes (TIM1 config, ADC scan setup, I²C traffic to 0x40 **and 0x50**) | dynamic corroboration of V1–V3, V7 | | ⬜ |
+| V7 | **Config storage location** — upstream STM32 stores config in an **external I²C EEPROM @ 0x50** (M24C04-family, 16-byte pages, on the same bus as the INA226); RE guessed "internal flash likely" (IO_COVERAGE line 42) and the unknown-I²C list (0x0C/0x10/0x4C) doesn't include 0x50 | re-scan the binary's I²C address literals + `FLASH_IF` call sites; Renode I²C trace | where config lives (drives the M4 config-store design — flash page vs EEPROM driver) | ⬜ |
+| V8 | **β3380 channel identity** — upstream defines Beta 3380 as the **onboard FET/driver temp** sensor, *not* battery; our RE labels PA3 (β3380) "battery-class"/BTS | re-check the PA3 conversion/clamps + how the harness BTS input is digitized; upstream NTC constants (10 K feed, 100 Ω ground-iso on external probes only) may distinguish onboard vs harness channels | which ADC channel is really battery temp — **feeds temp-comp and CONTROL_SPEC §5.1 rotor protection**; a swap here would mis-compensate charge voltage | ⬜ |
+
+**V5 outcome note (2026-07-23):** the upstream `CPU_STM32` block is a **skeletal 2018
+prototype** (HW "1.0.0", 2018-07-29) — field PWM, CAN, USB CDC, EEPROM config, and DIP read
+are implemented, but the **entire sensing datapath (INA226 read, ADC/NTC sampling) is
+stubbed**, and the STM32 scaler constants are placeholders (`AALT_SCALER` even has an
+integer-division-to-zero bug; `VALT_SCALER` ≈ 2:1 vs our recovered 34.33:1 — different board
+revision). So: upstream STM32 **header facts** (timers, I²C addresses, register values,
+`FIELD_PWM_MAX 0xFE`) are usable; upstream STM32 **scalers are not ground truth**; and all
+pin assignments live in a cubeMX project that isn't in the repo, so upstream can neither
+confirm nor refute the disassembled pin map — V1 remains binary-only. The production WS500
+firmware clearly evolved well past this snapshot (e.g. its INA variant auto-detect has no
+upstream counterpart).
 
 **Genuinely bench-only (don't chase in virtual):** field-driver topology/part numbers, exact
 analog resistor values (only ratios are in FW), which of PA1/PA2 = ATS vs internal (identical
@@ -171,7 +203,7 @@ if the pre-2015 license history ever matters.
 | 13 | Testing + bug tracking | `TEST_PLAN.md`; Renode emulation + bench HIL; GitHub Issues | M0→M6 | ⬜ |
 | 14 | Bring-up test firmware | `test-fw/` (§4). *ADC binding already recovered — this confirms scaling on bench* | M2 | ⬜ |
 | 15 | Bench safety | `SAFETY.md` (§5); gates every hardware milestone | all HW | 🔨 |
-| 16 | **License + third-party NOTICE** | **LICENSE = MIT** (decided §0.5; replaces the GPL placeholder); NOTICE for CMSIS (Apache-2.0) / HAL (BSD-3) / NMEA2000 (MIT) / Unity (MIT); **no GPL code in-tree — VSR is reference-only**; courtesy attribution to William A. Thomason in NOTICE/docs | **M0 (now)** | ⬜ |
+| 16 | **License + third-party NOTICE** | **LICENSE = MIT** ✅ + `NOTICE` ✅ (CMSIS Apache-2.0 / HAL BSD-3 / NMEA2000 MIT-planned; Thomason courtesy attribution; **no GPL code in-tree — VSR is reference-only**); README/OPEN_SOURCE license text aligned | **M0 (now)** | ✅ |
 | 17 | **OSS hygiene** | `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue/PR templates, README badges | M0 | ⬜ |
 | 18 | **Versioning + release** | `VERSION`/macro, `CHANGELOG.md`, tag/release flow | M0→M6 | ⬜ |
 | 19 | **Emulation harness** | Renode model (STM32F072 + peripherals + INA stub) for hardware-free dev/CI | M0→M1 | ⬜ |
@@ -185,7 +217,8 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
 - **M0 — Infrastructure** *(mostly done)*.
   Done: public remote ✅, CI (`.github/workflows/build.yml`) ✅, HAL vendoring
   (`scripts/fetch_deps.sh`) ✅, `stm32f0xx_hal_conf.h` ✅.
-  Remaining: **license + NOTICE (#16)**, OSS hygiene (#17), versioning scaffold (#18),
+  Done also: **license + NOTICE (#16)** ✅ (MIT + NOTICE, 2026-07-23).
+  Remaining: OSS hygiene (#17), versioning scaffold (#18),
   convert this table to Issues/Milestones, **stand up the Renode emulation harness (#19)**.
   *Exit:* repo builds green in CI; MIT LICENSE + NOTICE in place; issues created; emulator
   runs the built ELF far enough to exercise `main()`.
@@ -228,7 +261,7 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
 | Brick the only unit | project-ending (no spare) | M1 gate: proven DFU restore before first flash; SWD wired; ROM DFU is unerasable |
 | Wrong INA2xx scaling → bad current | unsafe charging | bench-verify against a reference meter (M2/M3); emulation cross-check |
 | Field-driver damage | hardware loss | dummy load, 20 % duty cap in test builds, TIM1 BKIN cutoff, current-limited supply (§5) |
-| License non-compliance (public repo + placeholder LICENSE; accidental GPL ingestion would forfeit the permissive goal) | legal/OSS | **#16 in M0, immediate**; no-GPL-in-tree rule (§0.5); dependency additions require a license check |
+| Accidental GPL ingestion (would forfeit the MIT/permissive goal) | legal/OSS | LICENSE+NOTICE done (#16 ✅); no-GPL-in-tree rule (§0.5); dependency additions require a license check |
 | Single irreplaceable unit | any HW test is high-stakes | emulation-first (#19); dry-run risky tests in Renode; golden stock image |
 | Control-model drift (code vs spec) | rework, bugs | M2.5 reconciliation; spec is single source of truth |
 | Draft specs with open questions | design churn | track `PROFILE_SPEC` §8 questions as issues; resolve before M3 coding they touch |

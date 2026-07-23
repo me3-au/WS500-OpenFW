@@ -65,4 +65,5 @@ Flash via DFU (the stock USB bootloader still works): `dfu-util -a 0 -s 0x080000
 
 ## License
 
-GPL-3.0-or-later (matches the WS500 Util tooling). See `LICENSE`.
+MIT. See `LICENSE` and `NOTICE`. The GPL VSR ancestor is reference-only — no GPL code is
+included in this codebase (see `docs/PROJECT_PLAN.md` §0.5).

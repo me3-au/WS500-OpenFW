@@ -1,0 +1,51 @@
+WS500-OpenFW
+Copyright (c) 2026 WS500-OpenFW contributors
+Licensed under the MIT License (see LICENSE).
+
+This NOTICE file lists third-party components and attributions. It is
+informational; each component is governed by its own license.
+
+--------------------------------------------------------------------------------
+Third-party components (vendored into Drivers/ by scripts/fetch_deps.sh;
+not committed to this repository):
+
+  STM32F0xx HAL Driver (STM32CubeF0)
+    Copyright (c) STMicroelectronics
+    License: BSD-3-Clause
+    https://github.com/STMicroelectronics/STM32CubeF0
+
+  CMSIS Core headers
+    Copyright (c) Arm Limited
+    License: Apache-2.0
+    https://github.com/ARM-software/CMSIS_5
+
+  CMSIS Device headers for STM32F0xx
+    Copyright (c) STMicroelectronics
+    License: Apache-2.0 / BSD-3-Clause (per file headers)
+
+Planned dependency (not yet integrated; will be added here when vendored):
+
+  NMEA2000 library, Timo Lappalainen (ttlappalainen/NMEA2000)
+    License: MIT
+    https://github.com/ttlappalainen/NMEA2000
+
+--------------------------------------------------------------------------------
+Prior art acknowledgement (no code included):
+
+This project's design was informed by study of the open-source VSR
+"Very Smart Regulator" by William A. (Al) Thomason
+(https://github.com/Open-Source-Alternator-Regulator/alt-Source,
+GPL-3.0-or-later), the open ancestor of the commercial Wakespeed WS500.
+The VSR source was used strictly as reference and validation material.
+No VSR source code — GPL or otherwise — is included in, or was ported to,
+this codebase; this project is an independent clean-slate implementation.
+This acknowledgement is a courtesy attribution, not a license obligation.
+
+--------------------------------------------------------------------------------
+Provenance:
+
+The hardware interface description (docs/WS500_HARDWARE_SPEC.md) was recovered
+by black-box analysis of the compiled stock WS500 firmware — interface facts
+only. This project contains none of the original Wakespeed firmware's
+control-logic source or expression. See docs/WS500_HARDWARE_SPEC.md for the
+full provenance note.
