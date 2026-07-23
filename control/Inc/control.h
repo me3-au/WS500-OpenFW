@@ -17,7 +17,7 @@
  * The app assembles ctrl_measured_t from drivers; sub-systems (arbitration,
  * thermal, rpm, bms, faults, config) feed ceilings + resolved profile in.
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #ifndef WS500_CONTROL_H
 #define WS500_CONTROL_H

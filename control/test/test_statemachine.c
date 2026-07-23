@@ -1,6 +1,6 @@
 /*
  * test_statemachine.c — engine transitions T1–T4, safety, CV clamp.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "test.h"
 #include "control.h"

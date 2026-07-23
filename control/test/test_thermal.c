@@ -1,7 +1,7 @@
 /*
  * test_thermal.c — §4 predictive governor: prediction pulls the ceiling early,
  * hard limit floors, missing sensor → inactive.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "test.h"
 #include "thermal.h"

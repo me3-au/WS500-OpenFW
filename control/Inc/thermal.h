@@ -2,7 +2,7 @@
  * thermal.h — predictive thermal governor (CONTROL_SPEC §4). PURE.
  * Regulates where temperature is *heading* (T + τ·dT/dt), not just where it is,
  * emitting a continuous power ceiling into arbitration. No step derates.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #ifndef WS500_THERMAL_H
 #define WS500_THERMAL_H

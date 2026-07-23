@@ -1,7 +1,7 @@
 /*
  * test.h — minimal host unit-test harness for the pure control core.
  * No framework: compile control/Src + control/test with native gcc and run.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #ifndef WS500_TEST_H
 #define WS500_TEST_H

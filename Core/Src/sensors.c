@@ -5,7 +5,7 @@
  * software oversample+average. Channel->signal binding and the raw->engineering
  * scaling are NOT yet known and must be resolved by signal injection (see README).
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "sensors.h"
 #include "board.h"

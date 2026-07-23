@@ -7,7 +7,7 @@
  * the control path. Inner-loop gains here are structural placeholders — the
  * shape is correct; numeric tuning is bench/emulation work.
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "control.h"
 #include "arbitration.h"

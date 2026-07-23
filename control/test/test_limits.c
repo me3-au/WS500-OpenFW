@@ -1,6 +1,6 @@
 /*
  * test_limits.c — hardware limit set → Watts ceilings (§2.1), + arbitration hook.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "test.h"
 #include "limits.h"

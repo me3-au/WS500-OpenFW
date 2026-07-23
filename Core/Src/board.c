@@ -1,6 +1,6 @@
 /*
  * board.c — clocks + peripheral GPIO init to the recovered WS500 pin map.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "board.h"
 

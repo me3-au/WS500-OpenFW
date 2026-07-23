@@ -1,7 +1,7 @@
 /*
  * faults.c — fault severity + disposition (§7, §9). PURE.
  * Masks live in faults.h so the engine shares the same classification.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "faults.h"
 

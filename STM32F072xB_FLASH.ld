@@ -1,6 +1,6 @@
 /* STM32F072xB — 128 KB flash @ 0x08000000, 16 KB SRAM @ 0x20000000.
  * Memory sizes recovered from the stock image (vector SP=0x20003FB0, ~111KB used).
- * SPDX-License-Identifier: GPL-3.0-or-later */
+ * SPDX-License-Identifier: MIT */
 ENTRY(Reset_Handler)
 
 _estack = 0x20004000;      /* top of 16 KB SRAM */

@@ -3,7 +3,7 @@
  * Defaults below are placeholders (profile 1 "Bulk, Float Norm", PROFILE_SPEC
  * §3/§4/§7), NOT tuned values; max_charge_power_w = 0 keeps output off until a
  * real config is loaded. Flash load + USB-CDC parse land here next.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "config_protocol.h"
 #include <math.h>

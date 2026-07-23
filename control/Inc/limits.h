@@ -2,7 +2,7 @@
  * limits.h — hardware limit set → Watts ceilings (CONTROL_SPEC §2.1). PURE.
  * Converts the static native-unit ratings to power ceilings at the present
  * voltage and writes them into the arbitration ceilings struct.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #ifndef WS500_LIMITS_H
 #define WS500_LIMITS_H

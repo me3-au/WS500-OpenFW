@@ -2,7 +2,7 @@
  * faults.h — fault classification + field disposition (CONTROL_SPEC §7, §9). PURE.
  * Which faults cut the field vs. drop to Limp Home vs. are informational is fixed
  * in firmware here, not user config.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #ifndef WS500_FAULTS_H
 #define WS500_FAULTS_H

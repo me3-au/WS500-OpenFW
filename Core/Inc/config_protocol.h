@@ -3,7 +3,7 @@
  * Produces the RESOLVED control config (globals + active profile + hardware
  * limit set + thermal governor config) the engine/app consume. Full profile
  * schema (PROFILE_SPEC §7) parse/store lands here.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #ifndef WS500_CONFIG_PROTOCOL_H
 #define WS500_CONFIG_PROTOCOL_H

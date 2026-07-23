@@ -2,7 +2,7 @@
  * ina2xx.c — INA226/228/238 driver stub. Register map + address confirmed from
  * the stock firmware (see board.h INA_* / docs/WS500_HARDWARE_SPEC.md §6c).
  * Implement the I2C transfers against I2C1 (PB6/PB7) and the per-variant LSB math.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "ina2xx.h"
 #include "board.h"

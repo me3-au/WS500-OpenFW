@@ -4,7 +4,7 @@
  *
  * Driver layer: exposes PHYSICAL readings only (V, A, °C). It does NOT know the
  * control types — the app assembles ctrl_measured_t from these + the INA driver.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #ifndef WS500_SENSORS_H
 #define WS500_SENSORS_H

@@ -1,4 +1,4 @@
-# WS500-OpenFW — STM32F072xB. SPDX-License-Identifier: GPL-3.0-or-later
+# WS500-OpenFW — STM32F072xB. SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.20)
 project(ws500-openfw C ASM)
 

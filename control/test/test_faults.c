@@ -1,6 +1,6 @@
 /*
  * test_faults.c — §7 severity + disposition ladder.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "test.h"
 #include "faults.h"

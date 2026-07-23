@@ -9,7 +9,7 @@
  *   binding ceiling, active profile, RPM source/state).
  * Later: RV-C encoder (CHARGER_STATUS / DC_SOURCE_STATUS + RBM election) reading
  * the SAME snapshot; then Rx (DVCC/BMS ceilings into arbitration).
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "can_n2k.h"
 

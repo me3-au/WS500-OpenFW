@@ -1,6 +1,6 @@
 /*
  * test_arbitration.c — CONTROL_SPEC §2 min()-of-ceilings behavior.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "test.h"
 #include "arbitration.h"

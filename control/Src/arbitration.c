@@ -1,6 +1,6 @@
 /*
  * arbitration.c — min() of active power ceilings (CONTROL_SPEC §2). PURE.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "arbitration.h"
 

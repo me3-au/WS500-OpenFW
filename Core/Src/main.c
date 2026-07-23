@@ -4,7 +4,7 @@
  * Wires drivers (hardware) to the pure control core: read sensors → assemble the
  * control input → run the engine at a fixed rate → apply the field command →
  * pump comms. The engine (control/) never touches hardware; this layer does.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "board.h"
 #include "field_drive.h"

@@ -1,6 +1,6 @@
 /*
  * test_telemetry.c — dialect-neutral snapshot build (derived fields + severity).
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "test.h"
 #include "telemetry.h"

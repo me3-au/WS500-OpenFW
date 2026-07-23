@@ -1,6 +1,6 @@
 /*
  * telemetry.c — build the dialect-neutral telemetry snapshot. PURE.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "telemetry.h"
 #include "faults.h"

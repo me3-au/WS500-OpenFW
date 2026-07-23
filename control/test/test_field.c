@@ -1,6 +1,6 @@
 /*
  * test_field.c — CONTROL_SPEC §5.1 dynamic rotor duty clamp + effort mapping.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "test.h"
 #include "field.h"

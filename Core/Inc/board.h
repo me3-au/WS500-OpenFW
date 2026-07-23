@@ -5,7 +5,7 @@
  * was extracted by black-box disassembly of the stock DFU image (see
  * docs/WS500_HARDWARE_SPEC.md). No control logic was taken from the original firmware.
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #ifndef WS500_BOARD_H
 #define WS500_BOARD_H
@@ -27,8 +27,9 @@
 #define FIELD_PWMN_PORT        GPIOB
 #define FIELD_PWMN_PIN         GPIO_PIN_15
 #define FIELD_PWMN_AF          GPIO_AF2_TIM1
-/* PWM timer resolution. Pick freq in field_drive.c; 0..FIELD_PWM_MAX = 0..100%. */
-#define FIELD_PWM_MAX          1000U
+/* PWM timer resolution; 0..FIELD_PWM_MAX = 0..100% duty. With the 1 MHz timer
+ * clock in field_drive.c this also sets the PWM frequency: 2500 -> 400 Hz. */
+#define FIELD_PWM_MAX          2500U
 
 /* ---- Analog sensing (ADC1, 7-ch scan, x4 oversample+average) --------------- *
  * External inputs, in ascending channel order (== DMA buffer index order):

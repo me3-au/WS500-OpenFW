@@ -1,5 +1,5 @@
 # arm-none-eabi toolchain for STM32F072 (Cortex-M0).
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR arm)
 

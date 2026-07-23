@@ -1,6 +1,6 @@
 /*
  * thermal.c — predictive thermal governor (§4.1). PURE.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "thermal.h"
 

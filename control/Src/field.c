@@ -1,6 +1,6 @@
 /*
  * field.c — field-effort → duty mapping with rotor clamp (§5.1). PURE.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "field.h"
 

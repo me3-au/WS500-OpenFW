@@ -2,7 +2,7 @@
  * field.h — field-effort mapping + rotor protection (CONTROL_SPEC §5.1). PURE.
  * The inner loop commands NORMALIZED effort e∈[0,1]; the dynamic duty clamp
  * translates it to a safe absolute PWM duty for the 12V-rotor-on-48V case.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #ifndef WS500_FIELD_H
 #define WS500_FIELD_H

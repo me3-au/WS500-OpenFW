@@ -2,7 +2,7 @@
  * arbitration.h — power arbitration (CONTROL_SPEC §2). PURE.
  * Commanded power = min() of the profile stage ceiling and every active ceiling.
  * The binding source is returned so it can be telemetered.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #ifndef WS500_ARBITRATION_H
 #define WS500_ARBITRATION_H

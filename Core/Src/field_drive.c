@@ -1,6 +1,6 @@
 /*
  * field_drive.c — TIM1 field PWM. Fail-safe defaults (starts at 0%).
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "field_drive.h"
 #include "board.h"
@@ -10,14 +10,15 @@ static bool s_faulted;
 
 void field_drive_init(void)
 {
-    /* TIM1 PWM on PA8/CH1. Pick a switching frequency appropriate for the field
-     * driver stage (typ. a few hundred Hz .. low kHz for an alternator field).
+    /* TIM1 PWM on PA8/CH1 at 400 Hz — designer-reported for the WS500; the whole
+     * lineage runs 122–400 Hz and >400 Hz is flagged lossy upstream. Pending
+     * confirmation against the stock binary's TIM1 config (PROJECT_PLAN §0.6 V2).
      * ARR = FIELD_PWM_MAX so CCR maps 0..FIELD_PWM_MAX == 0..100%. */
     const uint32_t psc = 47;                 /* 48MHz/(47+1) = 1 MHz timer clock */
     htim1.Instance = FIELD_TIM;
     htim1.Init.Prescaler = psc;
     htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-    htim1.Init.Period = FIELD_PWM_MAX - 1;   /* 1MHz/1000 = 1 kHz PWM */
+    htim1.Init.Period = FIELD_PWM_MAX - 1;   /* 1MHz/2500 = 400 Hz PWM */
     htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
     htim1.Init.RepetitionCounter = 0;
     htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;

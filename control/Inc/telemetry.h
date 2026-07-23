@@ -5,7 +5,7 @@
  * engine's outputs. Per-dialect encoders (NMEA2000 now → Cerbo; RV-C later)
  * consume this — so the control core never knows about wire formats and adding a
  * dialect is a bounded task.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #ifndef WS500_TELEMETRY_H
 #define WS500_TELEMETRY_H

@@ -6,7 +6,7 @@
  * (reads SHUNT_V/BUS_V/POWER at 0x40, auto-detects via DIE_ID). The INA reports
  * both the charge current and the local bus voltage.
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #ifndef WS500_INA2XX_H
 #define WS500_INA2XX_H

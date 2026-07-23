@@ -1,6 +1,6 @@
 /*
  * limits.c — hardware limit set → Watts ceilings (§2.1). PURE.
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 #include "limits.h"
 
