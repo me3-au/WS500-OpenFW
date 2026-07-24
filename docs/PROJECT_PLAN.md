@@ -169,7 +169,7 @@ clash, V3 — evolution can't excuse an impossible decode).
 | V4 | **ADC scaling — RESOLVED from the stock binary (2026-07-23).** 7-ch scan, **×4 software averaging** (routine `0x08014242`; F072 has no HW oversampler — confirmed), **12-bit** (FS 4095). Constants: **β3950** (PA1/PA2) and **β3380** (PA3) stored as *integer* literals (why the earlier float search missed them); **34.3333** divider + **3.3** Vref (PC5, FS ≈113.3 V); **10 kΩ** NTC pull-up. NTC = Beta/Steinhart (`logf`); voltage = linear. AF pin map independently matches V1 | stock binary (done) | scaling constants confirmed for our `sensors.c`; "×4 oversample" wording corrected | ✅ |
 | V5 | Mine the upstream `CPU_STM32` block (`SmartRegulator.h` v1.3.1) for WS500 facts | done 2026-07-23 | **Done — see outcome note below.** Corroborated: TIM1_CH1 field PWM, TIM2-as-µs-counter stator method, INA226 @0x40 regs 0x01/0x02 (+CONFIG 0x00 = `0x4523`, STATUS 0x06, 2.5 µV shunt LSB), IWDG use, 8 DIP inputs, Feature-In/Out, MCU family (alt target STM32F078xx). Upstream-silent: all GPIO pins (cubeMX-generated, not in source), BKIN, CH3N. New: prototype field PWM = **244 Hz**; config in **external I²C EEPROM @0x50**; **β3380 = FET temp, not battery** | ✅ |
 | V6 | Boot the stock image in Renode (#19); log peripheral writes (TIM1 config, ADC scan setup, I²C traffic to 0x40 **and 0x50**) | dynamic corroboration of V1–V3, V7 | | ⬜ |
-| V7 | **Config storage — narrowed (2026-07-23), one loose end.** From the stock binary: EEPROM @0x50 **REFUTED** (no 0xA0 transactions); **internal-flash programming REFUTED** (FLASH unlock keys 0x45670123/0xCDEF89AB and KEYR/CR/SR writes are entirely absent — and flash-write *code* would be in the shipped image, which is complete, so its absence is conclusive). **Prime suspect: the I²C2 device** — I²C2 is a second inited bus (handle 0x20002A20, different TIMINGR) running an **interrupt-driven ~300-byte peripheral** that toggles a GPIOA line; C read it as a display/aux but it's the only remaining persistence path and 300 bytes fits a config blob. **Loose end:** identify the I²C2 device 7-bit address + whether it's read at boot / written on `$` config change (→ EEPROM/FRAM = config store, vs display). Cross-check: a serial power-cycle test (read config, cycle, re-read) proves persistence exists. **Preliminary (2026-07-24, deeper disassembly pass — write-up pending):** an EEPROM write path *was* found after all — `HAL_I2C_Mem_Write` (fn @~0xE694 via 0x800300C) with DevAddress `0xA0 | ((offset>>16)&7)<<1` (7-bit **0x50 family with block-select bits** — the earlier "no 0xA0 transactions" search missed the *computed* address), 1-byte mem-address, **16-byte page chunking**, **7 ms write-cycle delay per page** (⇒ EEPROM, not FRAM), gated by **PA15 as /WP** (low to write, high to protect — the GPIOA toggle). Config-load cluster @0x0800C3xx reads 0x84-byte records with magic (0x873A/0xC03A…) + CRC. Still to confirm: which I²C bus handle this driver binds (I²C1 vs I²C2) | disassemble the I²C2 driver `0x8014050`/`0x8014084` for its DevAddress; Stage-A serial persistence test | resolves the M4 config-store design (I²C EEPROM/FRAM driver vs other) | 🔨 |
+| V7 | **Config storage — RESOLVED from the stock binary (2026-07-24, deeper pass; findings in `../New folder/i2c2_findings.md`).** The config store is a **24C16-class 2 KB serial EEPROM at 7-bit 0x50**, write-protected by **PA15 = /WP** (driven low around writes). The earlier "EEPROM@0x50 refuted — no 0xA0 transactions" verdict was **wrong because the DevAddress is computed, not literal**: `0xA0 | ((addr>>8)&7)<<1` (`adds …,#0xA0` at `0x0800DDF4` read / `0x0800E6C8` write) — block-select bits + 8-bit word address = textbook 24C16. Read `fn_DDC4`: 1-byte word address, 256-byte block chunking, retry×3. Write `fn_E694` → `HAL_I2C_Mem_Write` (`0x0800300C`): **16-byte page programming with 7 ms `osDelay` per page** (write-cycle wait ⇒ EEPROM, not FRAM). **Config-store confirmed, not display**: boot-load cluster `0x0800C3E0–0x0800C5F0` reads **0x84-byte records** validated by magic (`0x873A/0xC03A`, `0xF9AC/0xA97`) + CRC (`0x080131E0`); write-on-change is read-modify-write (`fn_D680`). Driver is **polled HAL, not interrupt-driven** (both I²C IRQ vectors are the weak default); the previously-fingered `0x8014050/0x8014084` were mis-identified — they're the **UART console TX path** (PA9, string table `0x0801B418`). **Bus correction (revises V3):** the shared active-handle slot `0x20000174` is written exactly once, to **hi2c2** at boot (`0x0800555E`), and hi2c1 is DeInit'd — so **both the EEPROM *and* the INA226 run on I²C2 (PB10/PB11, AF1)**, not I²C1. The boot INA probe on the zero-init hi2c1 fails deterministically, then the code rebinds everything to I²C2; V3's "INA226 @ I²C1" was the pre-rebind reading. Bench falsification (Stage-A, readings-only): scope PB6/PB7 vs PB10/PB11 at boot — the pair carrying 0x40/0xA0 traffic is live, the other idles after the DeInit | disassembly done (`../New folder/i2c2_findings.md`); Stage-A scope confirms bus | resolves the M4 config-store design → **24C16 EEPROM driver @0x50 + PA15 /WP on I²C2**; moves INA226 to I²C2 | ✅ |
 | V8 | **β3380 channel identity — RESOLVED from the stock binary (2026-07-23), confidence med-high.** PA3/β3380 is the **FET/driver over-temp sensor, NOT battery**: its result (`0x200003E0`) drives a **125 °C over-temp fault** (`0x4029`), an over-temp status classifier, and telemetry — and **nothing feeds any `V_target += k·(Tref−T)` temp-comp**. Battery temp for temp-comp arrives over **CAN/BMS**, not the local ADC (agrees with upstream VSR; refutes our "BTS" label). **Design consequence:** our temp-comp must source battery temp from CAN (or a correctly-identified harness input), and PA3 belongs to the **thermal governor** (`thermal.c`), not temp-comp. β3950 (PA1/PA2, 160 °C clamp) are the alternator/hot-probe channels | stock binary (done) | corrects the sensor labelling; **redirects temp-comp sourcing and CONTROL_SPEC §5.1** | ✅ |
 
 **V5 outcome note (2026-07-23):** the upstream `CPU_STM32` block is a **skeletal 2018
@@ -202,10 +202,16 @@ settles most of them):
   with IO_COVERAGE's ✅; add the newly-found PA7/PB2.
 - **System tick = TIM7** (V1); active peripheral set = ADC+DMA, CAN, USB, TIM7, EXTI only.
 - **INA226 only, no auto-detect** (V3) — strike the HW-spec §6c "INA226/228/238 auto-detect
-  via die-ID" paragraph; regs 0x01/0x02/0x06 big-endian @0x40 on I²C1; CALIB from shunt.
-- **Config store is NOT internal flash and NOT EEPROM@0x50** (V7) — remove IO_COVERAGE's
-  "internal flash likely (FLASH_IF)"; the store is the I²C2 device (address TBD). This also
-  revises §6 FLASH_AND_RECOVERY assumptions (config lives off-chip, not in a flash page).
+  via die-ID" paragraph; regs 0x01/0x02/0x06 big-endian @0x40; CALIB from shunt.
+  **Bus corrected (V7, 2026-07-24):** the INA226 is on **I²C2**, not I²C1 — the stock FW
+  DeInits I²C1 at boot and binds both the INA226 (0x40) and the config EEPROM (0x50) to
+  I²C2 (PB10/PB11). Bench-scope confirm (Stage A). Our `ina2xx.c` carries a BUS CAVEAT
+  comment and the bus is tracked as GH#36.
+- **Config store IS a 24C16 EEPROM @0x50 on I²C2, /WP = PA15** (V7 — RESOLVED 2026-07-24;
+  the earlier "NOT EEPROM@0x50" was wrong, the device address is computed not literal).
+  Not internal flash (that part stands — stock MCU never programs its own flash). Remove
+  IO_COVERAGE's "internal flash likely (FLASH_IF)". §6 FLASH_AND_RECOVERY: config lives in
+  an external I²C EEPROM, not a flash page. *(IO_COVERAGE + HW-spec edits applied 2026-07-24.)*
 - **β3380/PA3 = FET/driver temp, not BTS** (V8) — relabel HW-spec §6b/§6c; temp-comp sources
   battery temp from CAN.
 - Still open: CONTROL_SPEC §5.1 internal-NTC dependency + bootstrap max-duty cap (§0.5);
@@ -231,7 +237,7 @@ settles most of them):
 | 10a | **RV-C Tx dialect** (+ RBM election) | 2nd encoder over the same snapshot; **co-important** — a Cerbo's port is N2K *or* RV-C, so RV owners need this to see us | M3 (close behind N2K) | ⬜ |
 | 11 | CAN docs | `CAN_INTEGRATION.md` | M3/M5 | 🔨 draft |
 | 12 | User documentation | `USER_MANUAL.md` (install, config, LED codes, troubleshooting) | M6 | 🔨 draft |
-| 13 | Testing + bug tracking | `TEST_PLAN.md`; Renode emulation + bench HIL; GitHub Issues | M0→M6 | ⬜ |
+| 13 | Testing + bug tracking | control-core unit tests (CI) ✅ + **SIL gauntlet `sim/` (CI, §8.1)** ✅; `TEST_PLAN.md` ⬜; Renode ⬜; bench HIL ⬜; GitHub Issues ✅ | M0→M6 | 🔨 |
 | 14 | Bring-up test firmware | `test-fw/` (§4). *ADC binding already recovered — this confirms scaling on bench* | M2 | ⬜ |
 | 15 | Bench safety | `SAFETY.md` (§5); gates every hardware milestone | all HW | 🔨 |
 | 16 | **License + third-party NOTICE** | **LICENSE = MIT** ✅ + `NOTICE` ✅ (CMSIS Apache-2.0 / HAL BSD-3 / NMEA2000 MIT-planned; Thomason courtesy attribution; **no GPL code in-tree — VSR is reference-only**); README/OPEN_SOURCE license text aligned | **M0 (now)** | ✅ |
@@ -443,15 +449,26 @@ records and reset counters.
 Policy: **everything that can be proven without the unit, is** — the only WS500 is live on
 a 48 V system (§5). Four virtual layers, cheapest first; all run in CI:
 
-- **8.1 SIL — simulated charge cycles against a plant model.** `control/` is pure and
-  HAL-free by design, so drive `ctrl_tick()` natively against a simple plant: LFP battery
-  model (OCV/SOC curve, internal resistance, thermal mass), alternator model (output vs RPM
-  × field duty, belt/pulley), harness delays. Scenarios: full CHARGE→REST cycles at 16S/48 V,
-  cold/hot temp comp, BMS ceiling steps, engine-speed transients, load dump, sensor dropout
-  and implausible-value injection, **rotor-clamp verification with this exact install's
-  parameters (4 Ω / 12 V rotor on 48–57.6 V bus → duty ceiling ≈25 %/≈21 %)**, and
-  long-soak (accelerated time) for state-machine leaks. This is the main gauntlet — a
-  regression suite, not a demo.
+- **8.1 SIL — simulated charge cycles against a plant model.** ✅ **BUILT 2026-07-24
+  (`sim/`, GH#26).** `control/` is pure and HAL-free by design, so it drives `ctrl_tick()`
+  natively against a plant: LFP battery model (OCV/SOC curve, internal resistance, thermal
+  mass), alternator model (output vs RPM × field duty, belt/pulley), harness delays. The
+  alternator model is calibrated to the 2026-07-24 stock reference trace (≈25 % field @
+  ~2330 RPM ⇒ ~140 A / 7.6 kW at ~54.7 V). **9 scenarios / 111 checks, all green** in CI
+  (new `sil` job): CHARGE→REST cycles at 16S/48 V, temp window, BMS ceiling steps,
+  engine-speed transients, sensor dropout + implausible-value injection (faults latch, field
+  safe), **rotor-clamp verification with this exact install's parameters (4 Ω / 12 V rotor
+  on 48–57.6 V bus → duty ceiling ≈25 %/≈21 %, verified never exceeded under 20 min of
+  transient abuse)**, reference-trace shape, and a 5 M-tick long-soak (zero invariant
+  violations). The main gauntlet — a regression suite, not a demo.
+  - **Payoff: 4 control-core bugs caught + fixed with tests** — two NaN-propagation faults
+    (lost VBat → NaN field duty; shunt dropout → effort integrator latched permanently),
+    tick-rate-dependent + marginally-unstable inner-loop gains (chatter matching live
+    observation; now dt-scaled, KP −5×), and a knife-edge CV-exit qualifier that stalled
+    T2 hold timers under sensor noise. Documented-not-fixed (app-side / spec, GH#37):
+    run-detect/stationary-rotor budget (§5.2) absent from the pure core; dynamic clamp
+    trusts measured supply V (in-range sensor lies loosen it — needs plausibility); T3
+    Ah-revert integrator unwired.
 - **8.2 Renode — whole-firmware emulation (#19).** STM32F072 machine model + INA226 I²C
   stub + CAN loopback: boot the real ELF, exercise `main()`'s loop, fault paths (§7:
   induced HardFault → safe state + crash record), watchdog starvation, and DFU-adjacent

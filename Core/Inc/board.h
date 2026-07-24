@@ -19,8 +19,9 @@
  * PA8  = TIM1_CH1  (AF2)  — primary field PWM output
  * PB15 = TIM1_CH3N (AF2)  — complementary/aux (confirm role vs field-driver topology)
  * BKIN: NOT used by stock (BDTR.BKE=0, no break-AF pin — binary disasm 2026-07-23,
- * PROJECT_PLAN §0.6 V1+V2). Stock field fault cutoff is a software MOE-clear; we
- * keep BKIN only as an optional improvement if a fault comparator is ever wired.  */
+ * PROJECT_PLAN §0.6 V1+V2), and NOT routed on the board. Field fault cutoff is a
+ * software MOE-clear (stock-proven); our driver keeps break DISABLED — re-enable
+ * only if a fault comparator is ever wired to a break-capable pin.               */
 #define FIELD_TIM              TIM1
 #define FIELD_TIM_CH           TIM_CHANNEL_1
 #define FIELD_PWM_PORT         GPIOA
@@ -104,18 +105,12 @@
 #define INA_REG_CONFIG         0x00U
 #define INA_REG_SHUNT_V        0x01U     /* -> current (with shunt) */
 #define INA_REG_BUS_V          0x02U     /* -> DC volts at shunt (batt or alt) */
-#define INA_REG_POWER          0x03U
-#define INA_REG_CURRENT        0x04U
-#define INA_REG_CALIBRATION    0x05U
+#define INA_REG_POWER          0x03U     /* unused: power computed in software (ina2xx.c) */
+#define INA_REG_CURRENT        0x04U     /* unused: current computed from SHUNT_V */
+#define INA_REG_CALIBRATION    0x05U     /* left at POR 0 — see ina2xx.c */
 #define INA_REG_MASK_ENABLE    0x06U     /* conversion-ready gate (stock uses this) */
-/* ID regs exist on the INA226 silicon; the STOCK firmware never reads them
- * (§0.6 V3 — the old "INA226/228/238 auto-detect" claim is refuted). Kept only
- * for an optional sanity probe in our own driver. */
-#define INA_REG_MANUF_ID       0xFEU     /* 0x5449 = 'TI' */
-#define INA_REG_DIE_ID         0xFFU
-#define INA_DIEID_INA226       0x2260U
-#define INA_DIEID_INA228       0x2280U   /* not fitted on WS500 hardware */
-#define INA_DIEID_INA238       0x2380U   /* not fitted on WS500 hardware */
+/* No ID-register defines: neither the stock firmware nor our driver reads
+ * MANUF_ID/DIE_ID — the "INA226/228/238 auto-detect" was fiction (§0.6 V3). */
 #define SHUNT_FULL_SCALE_A     500.0f    /* 500A / 50mV default shunt */
 #define SHUNT_FULL_SCALE_MV    50.0f
 

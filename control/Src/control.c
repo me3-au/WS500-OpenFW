@@ -26,9 +26,22 @@
 #define TAU_VREVERT        30.0f
 #define TAU_PTAIL          60.0f
 
-/* Inner-loop gains (placeholders; bench-tunable). Normalized effort per unit. */
-#define KV_PER_VOLT        0.02f
-#define KP_PER_WATT        0.00005f
+/* [SIL-found 2026-07] Tolerance band (V/cell) for the "voltage-clamped"
+ * qualifier. The CV loop regulates ~V to the target from below, so with any
+ * sensor noise/ripple `v >= cv_pack` flickers and the T2 hold timers
+ * (tail / cv_hold_exit / Solar-Finish) reset forever — in the SIL long-soak
+ * BULK could never exit at CV. Within-band counts as clamped. */
+#define CV_CLAMP_BAND_VCELL 0.01f
+
+/* Inner-loop gains (placeholders; bench-tunable). Normalized effort per unit
+ * of error per SECOND.
+ * [SIL-found 2026-07] Previously per-TICK (tick-rate dependent), and the power
+ * gain (5e-5/W/tick @10 ms ≡ 5e-3/W/s) was marginally unstable against the
+ * calibrated 48 V plant (loop gain ≈ 2 at cruise RPM → limit-cycle chatter and
+ * ceiling overshoot in the §8.1 SIL BMS-step scenario). Gains are now
+ * dt-scaled; KV is unchanged at the 10 ms design rate, KP reduced 5×. */
+#define KV_PER_VOLT_S      2.0f      /* == 0.02/tick at the 10 ms design rate */
+#define KP_PER_WATT_S      1.0e-3f   /* == 1e-5/tick at 10 ms (was 5e-5/tick) */
 
 static float ema(float prev, float x, float tau_s, float dt_s)
 {
@@ -169,7 +182,8 @@ ctrl_command_t ctrl_tick(ctrl_t *c,
 
         case CTRL_BULK: {                                          /* T2 charged exits */
             const float cv_pack = prof->cv_target_vcell * (float)cells;
-            const bool clamped = (c->v_ctrl_f >= cv_pack);
+            const bool clamped =
+                (c->v_ctrl_f >= cv_pack - CV_CLAMP_BAND_VCELL * (float)cells);
             if (clamped) c->vclamp_hold_ms += dt_ms; else c->vclamp_hold_ms = 0;
 
             bool charged = false;
@@ -241,11 +255,16 @@ ctrl_command_t ctrl_tick(ctrl_t *c,
         const float cv_pack = cv_vcell * (float)cells;
         const float v_err = cv_pack - c->v_ctrl_f;          /* >0 = below CV target */
         const float p_err = c->cmd_power_w - m->watts_batt;  /* >0 = below power target */
-        const float e_from_v = effort + KV_PER_VOLT * v_err;
-        const float e_from_p = effort + KP_PER_WATT * p_err;
+        const float e_from_v = effort + KV_PER_VOLT_S * v_err * dt_s;
+        const float e_from_p = effort + KP_PER_WATT_S * p_err * dt_s;
 
         if (e_from_v <= e_from_p) { effort = e_from_v; bind = CTRL_BIND_VOLTAGE_CLAMP; bind_w = m->watts_batt; }
         else                      { effort = e_from_p; bind = arb.src;                 bind_w = arb.watts; }
+
+        /* [SIL-found 2026-07] A NaN measurement (e.g. shunt dropout → watts_batt
+         * = NaN) must never reach the PWM, and must not latch: NaN passed both
+         * range clamps below and stuck in c->effort permanently. */
+        if (!isfinite(effort)) { effort = 0.0f; bind = CTRL_BIND_NONE; bind_w = 0.0f; }
 
         if (effort < 0.0f) effort = 0.0f;
         if (effort > 1.0f) effort = 1.0f;

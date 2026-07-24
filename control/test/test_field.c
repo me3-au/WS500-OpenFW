@@ -41,6 +41,14 @@ void test_field(void)
     CHECK_FEQ(ctrl_duty_max(&g, 0.0f), 0.0f, 0.001f);
     CHECK_FEQ(ctrl_duty_max(&g, -5.0f), 0.0f, 0.001f);
 
+    /* [SIL-found 2026-07] NaN supply (lost VBat sense) must also fail safe to
+     * 0 — previously returned NaN, which reached the PWM command in LIMP. */
+    CHECK_FEQ(ctrl_duty_max(&g, NAN), 0.0f, 0.001f);
+    {
+        ctrl_globals_t gn = g_base(); gn.rotor_rated_v = NAN;
+        CHECK_FEQ(ctrl_duty_max(&gn, 57.6f), 0.0f, 0.001f);
+    }
+
     /* Effort → duty, with clamping of out-of-range effort. */
     CHECK_FEQ(ctrl_effort_to_duty(0.5f, 0.20f), 0.10f, 0.001f);
     CHECK_FEQ(ctrl_effort_to_duty(1.0f, 0.25f), 0.25f, 0.001f);

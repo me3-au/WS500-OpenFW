@@ -53,7 +53,7 @@ USB/CAN share SRAM); F070 (no bxCAN); F091 (32 KB RAM, not 16 KB).
 
 | Region | Address | Notes |
 |---|---|---|
-| Flash | `0x08000000` + 128 KB | App + vector table at base. **NOT used for config storage** — flash unlock keys (0x45670123/0xCDEF89AB) and KEYR/CR/SR write code are entirely absent from the image, so the stock firmware never programs its own flash (stock binary disassembly 2026-07-23, §0.6 V7). Config persists off-chip (I²C2 device; see §6c). |
+| Flash | `0x08000000` + 128 KB | App + vector table at base. **NOT used for config storage** — flash unlock keys (0x45670123/0xCDEF89AB) and KEYR/CR/SR write code are entirely absent from the image, so the stock firmware never programs its own flash (stock binary disassembly 2026-07-23, §0.6 V7). Config persists off-chip in an **external 24C16 EEPROM @ 0x50 on I²C2** (stock binary disassembly 2026-07-24, §0.6 V7; see §6c). |
 | SRAM | `0x20000000` + 16 KB | Stack top `0x20003FB0`. |
 | Peripherals | `0x40000000` / `0x48000000` | Standard STM32F0 map (see §4). |
 
@@ -71,7 +71,7 @@ binary — a rough proxy for how heavily it's used, not an exact usage map.
 | **ADC** (12-bit) | 2 | **Analog sensing:** battery voltage, alternator voltage, shunt-amp output (current), alt & battery temperature. Channel→signal mapping TBD. |
 | **bxCAN** | 2 | CAN bus — RV-C / NMEA2000 / J1939 / Victron. |
 | **USB_FS** + **CRS** | 2 + 1 | USB CDC **virtual COM port** (config channel; string "WS500 Virtual ComPort"). Crystal-less via CRS/HSI48. |
-| **I2C1** + **I2C2** | 3 each | Two I²C buses. **I²C1 hosts the INA226 @ 0x40** (§0.6 V3). **I²C2** runs an interrupt-driven ~300-byte device — prime config-store suspect, address TBD (§0.6 V7). |
+| **I2C1** + **I2C2** | 3 each | Two I²C buses. **The active bus is I²C2 (PB10/PB11)**, carrying **BOTH the INA226 @ 0x40 AND a 24C16 EEPROM config store @ 0x50** (stock binary disassembly 2026-07-24, §0.6 V7). At boot the firmware inits I²C1, its INA226 probe on the still-NULL hi2c1 handle fails deterministically, and the driver then **DeInits I²C1** and rebinds the shared active-handle to hi2c2. The I²C driver is **polled HAL, not interrupt-driven** (both I²C IRQ vectors are the default weak handler). *Note:* §0.6 V3 originally read the INA226 on I²C1 — that was the pre-DeInit/pre-rebind state; bus assignment flagged for Stage-A scope confirmation (PB6/PB7 vs PB10/PB11). |
 | **IWDG** | 5 | Independent watchdog (safety). |
 | **EXTI / SYSCFG** | 2–3 | External interrupt lines (candidate: tach edge, fault/enable inputs). |
 | **RCC** | 20 | Clock tree (expected). |
@@ -133,10 +133,11 @@ numbers cross-checked against the STM32F072 datasheet AF table.
 | Enable / feature input | PB13 | GPIO input, polled | High (pin); Enable vs Feature-In label → bench |
 | **CAN RX** | **PB8** | CAN_RX, AF4 | High |
 | **CAN TX** | **PB9** | CAN_TX, AF4 | High |
-| I²C1 SCL / SDA | PB6 / PB7 | AF1, open-drain, pull-up | High |
-| I²C2 SCL / SDA | PB10 / PB11 | AF1, open-drain, pull-up | High |
+| I²C1 SCL / SDA | PB6 / PB7 | AF1, open-drain, pull-up | High — inited then **DeInit'd** at boot (§0.6 V7); idle at runtime |
+| I²C2 SCL / SDA | PB10 / PB11 | AF1, open-drain, pull-up | High — **active bus: INA226 @ 0x40 + 24C16 EEPROM @ 0x50** (§0.6 V7; bus assignment → Stage-A scope) |
+| **EEPROM write-protect (/WP)** | **PA15** | GPIO output — LOW to write-enable, HIGH to protect | High — stock binary disassembly 2026-07-24 (§0.6 V7); toggled around the EEPROM page-write loop |
 | USB DM / DP | PA11 / PA12 | USB FS (fixed) | High |
-| Digital I/O (LED/status/fault out, misc) | PC13, PC14, PC15, PA0, PA9, PA15, PB3, PB4, PB5, PB14, PC4, PC10 | GPIO in/out | Medium — pins seen in `MX_GPIO_Init`; individual functions not yet resolved |
+| Digital I/O (LED/status/fault out, misc) | PC13, PC14, PC15, PA0, PA9, PB3, PB4, PB5, PB14, PC4, PC10 | GPIO in/out | Medium — pins seen in `MX_GPIO_Init`; individual functions not yet resolved (PA15 now resolved = EEPROM /WP; PA9 = a console/debug TX line, §0.6 V7) |
 
 **Analog channel binding — RECOVERED FROM FIRMWARE** (measurement routine at
 `0x08014230`; conversion constants decoded from the per-slot scaling calls):
@@ -161,8 +162,8 @@ Scaled results are written to a measurement-global cluster at `0x200003D8..0x200
 
 **Not on this ADC scan: shunt CURRENT and shunt-side bus VOLTAGE.** The WS500 must acquire
 current (500 A/50 mV shunt) — but it is not among the four analog channels here.
-**Resolved (stock binary disassembly 2026-07-23, §0.6 V3):** both arrive from the
-**INA226 on I²C1 @ 0x40** (see §6c).
+**Resolved (stock binary disassembly 2026-07-23, §0.6 V3; bus corrected 2026-07-24, §0.6 V7):**
+both arrive from the **INA226 @ 0x40 on I²C2** (see §6c).
 
 **ADC acquisition facts (confirmed from firmware):**
 - 7-channel scan, **12-bit** (FS 4095), DMA to buffer `0x2000288C`, **×4 software
@@ -205,17 +206,20 @@ the firmware acquisition paths. This is the authoritative physical-input list.
 | 3  Feature-In (White) | digital/config | GPIO | multi-function |
 | 2  Lamp / Feature-Out (Orange) | output | GPIO | |
 
-**Single current input — CONFIRMED: TI INA226 (only) on I²C1 @ 0x40, hardwired.**
+**Single current input — CONFIRMED: TI INA226 (only) @ 0x40, hardwired on I²C2.**
 There is exactly one shunt (500 A/50 mV), selectable at the battery or alternator via
 `$CCN ShuntAtBat`. Being a differential millivolt signal it is not readable by the
 single-ended STM32F072 ADC and is absent from the 7-channel scan; it is digitized by a
-**TI INA226** current-and-power monitor at **I²C 7-bit address 0x40** on **I²C1**.
+**TI INA226** current-and-power monitor at **I²C 7-bit address 0x40** on **I²C2**.
 
 Evidence (stock binary disassembly 2026-07-23, §0.6 V3): the reader at `0x800B530` reads
 registers **`0x06` Mask/Enable** (conversion-ready gate), **`0x02` BUS_V** (→ local DC
-voltage), and **`0x01` SHUNT_V** (→ current), all **16-bit big-endian**, on I²C1 @ 0x40.
-The **CALIBRATION register value is computed at runtime from the configured shunt ratio**
-— it is not a magic constant.
+voltage), and **`0x01` SHUNT_V** (→ current), all **16-bit big-endian**, @ 0x40. The
+**CALIBRATION register value is computed at runtime from the configured shunt ratio** — it
+is not a magic constant. **Bus corrected to I²C2 (2026-07-24, §0.6 V7):** V3 read the
+INA226 on I²C1, but that was the pre-DeInit state — the boot probe fails on the NULL hi2c1
+handle, the firmware DeInits I²C1 and rebinds to hi2c2, so both the INA226 and the config
+EEPROM run on I²C2 (PB10/PB11). Flagged for Stage-A scope confirmation.
 
 > **Correction (2026-07-23):** an earlier revision of this document claimed the firmware
 > auto-detects an INA226/INA228/INA238 variant via DIE_ID/manufacturer-ID registers, and
@@ -232,16 +236,29 @@ why neither is on the internal ADC. Reuse a standard open INA226 driver over I²
 the CALIBRATION value from the configured shunt (500 A/50 mV default), not a copied
 constant.
 
-**Config storage (narrowed — §0.6 V7, in progress):** NOT internal flash (no flash-write
-code in the image) and NOT an EEPROM @ 0x50 (no 0xA0 transactions). The prime suspect is
-the **I²C2 device** — a second inited bus running an interrupt-driven ~300-byte
-peripheral (driver at `0x8014050`/`0x8014084`); its 7-bit address and boot-read/
-config-write behavior are still to be extracted.
+**Config storage — RESOLVED (stock binary disassembly 2026-07-24, §0.6 V7):** an
+**external 24C16-class serial EEPROM at 7-bit address 0x50 on I²C2** (2 KB, 8×256-byte
+blocks, 16-byte pages) — **NOT** internal flash (no flash-write code in the image). The
+earlier "NOT EEPROM @ 0x50 — no 0xA0 transactions" verdict is **overturned**: the 8-bit
+device address is *computed* at runtime (`0xA0 | ((wordaddr>>8)&7)<<1`, an `adds rX,#0xa0`
+opcode), so a constant/byte-pattern search never saw it. Read routine `fn_DDC4`
+(`0x0800DDC4`): 1-byte word address, 256-byte block chunking, retry×3. Write routine
+`fn_E694` (`0x0800E694`) → `HAL_I2C_Mem_Write` (`0x0800300C`) with **16-byte page
+programming** and a **7 ms `osDelay` per page** — a write-cycle wait that proves EEPROM,
+not FRAM. Config records are **0x84 bytes**, validated by magic (0x873A/0xC03A,
+0xF9AC/0xA97) + CRC; the boot-load cluster is at `0x0800C3E0`–`0x0800C5F0`; write-on-change
+is read-modify-write. **/WP = PA15** (driven LOW to write-enable, HIGH to protect). The
+I²C driver is **polled HAL, not interrupt-driven**. (The routines `0x08014050`/`0x08014084`
+once suspected as the config-store driver are actually a console/debug TX path that drives
+PA9 and prints strings — unrelated to storage.) *Bus assignment (I²C1 vs I²C2) is flagged
+for Stage-A scope confirmation; everything else here is binary-confirmed, high confidence.*
 
 Non-ADC input handles (corrected): `0x20002910` = CAN, `0x200029A0` = TIM1 (field),
 `0x200029E0` = TIM2 (**free-running 32-bit timebase @ ~979.6 kHz** — software reads CNT
 at [handle→0x24] and diffs successive counts against PA10/EXTI stator edges; not input
-capture). Only `0x20002954` is I²C1.
+capture). The I²C handles are `0x20002954` = hi2c1 (DeInit'd at boot) and `0x20002A20` =
+hi2c2 (the live INA226 + EEPROM bus); the shared active-handle slot at `0x20000174` is
+bound to hi2c2.
 
 ## 7. Open items — needed to complete the hardware spec
 
@@ -258,9 +275,11 @@ reading the original control-logic source:
    gate driver + MOSFET part numbers (board photo / schematic trace). Still open — bench.
 4. **Analog front-end resistor values** — the *ratios* (34.3333:1 divider, 10 kΩ NTC
    pull-up) are recovered from firmware; exact resistor values are board facts. Bench.
-5. **Config storage device** — narrowed (§0.6 V7): NOT internal flash, NOT EEPROM @ 0x50;
-   prime suspect is the interrupt-driven ~300-byte device on **I²C2** — its 7-bit address
-   and read/write pattern still to be extracted from the I²C2 driver.
+5. ~~**Config storage device.**~~ **RESOLVED — external 24C16-class EEPROM @ 0x50 on I²C2**
+   (stock binary disassembly 2026-07-24, §0.6 V7): 2 KB / 8×256-byte blocks / 16-byte
+   pages, /WP on PA15, polled HAL; boot-read + write-on-change of magic/CRC-validated
+   0x84-byte records (see §6c). The only residual open is the **I²C1-vs-I²C2 bus
+   assignment**, flagged for Stage-A scope confirmation (PB6/PB7 vs PB10/PB11).
 
 ---
 

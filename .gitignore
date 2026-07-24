@@ -5,6 +5,11 @@
 *.map
 *.o
 *.d
+# Native test binaries (control-core unit tests, SIL gauntlet)
+*.exe
+*.pdb
+/control_tests
+/sil_tests
 # Vendored deps (fetch via scripts/fetch_deps.sh — see Drivers/README.md)
 /.deps/
 /Drivers/STM32F0xx_HAL_Driver/

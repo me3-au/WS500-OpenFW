@@ -36,21 +36,20 @@ void field_drive_init(void)
     oc.OCNIdleState = TIM_OCNIDLESTATE_RESET;
     HAL_TIM_PWM_ConfigChannel(&htim1, &oc, FIELD_TIM_CH);
 
-    /* Break input: TIM1_BKIN would force outputs to idle (off) in hardware on a
-     * fault line. NOTE (§0.6 V1+V2, resolved 2026-07-23): the STOCK WS500 does NOT
-     * use hardware BKIN — BDTR.BKE=0 and no break-AF pin is configured anywhere in
-     * the image; it cuts the field in software by clearing MOE (see
-     * field_drive_fault_cutoff). Keeping BKIN here is a deliberate optional
-     * improvement, valid only if a fault comparator is ever wired to a
-     * break-capable pin (none is routed in stock). MOE-clear is the proven
-     * primary cutoff. */
+    /* Break input: DISABLED — hardware fact (§0.6 V1+V2, stock binary disasm
+     * 2026-07-23): BDTR.BKE=0 in stock and NO BKIN pin is routed on the board.
+     * Enabling break with a floating/unrouted break source is a hazard
+     * (spurious PWM kill or undefined behavior), so it must stay off. The
+     * fault cutoff is the software MOE-clear in field_drive_fault_cutoff(),
+     * exactly as in stock. Re-enable (TIM_BREAK_ENABLE + a real polarity)
+     * ONLY if a fault comparator is ever wired to a break-capable pin. */
     TIM_BreakDeadTimeConfigTypeDef bdt = {0};
     bdt.OffStateRunMode  = TIM_OSSR_DISABLE;
     bdt.OffStateIDLEMode = TIM_OSSI_DISABLE;
     bdt.LockLevel        = TIM_LOCKLEVEL_OFF;
     bdt.DeadTime         = 0;
-    bdt.BreakState       = TIM_BREAK_ENABLE;
-    bdt.BreakPolarity    = TIM_BREAKPOLARITY_HIGH;
+    bdt.BreakState       = TIM_BREAK_DISABLE;
+    bdt.BreakPolarity    = TIM_BREAKPOLARITY_HIGH;   /* don't care while BKE=0 */
     bdt.AutomaticOutput  = TIM_AUTOMATICOUTPUT_DISABLE;
     HAL_TIMEx_ConfigBreakDeadTime(&htim1, &bdt);
 

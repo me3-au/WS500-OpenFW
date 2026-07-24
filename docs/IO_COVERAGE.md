@@ -22,15 +22,16 @@ See `WS500_HARDWARE_SPEC.md` for the derivation of every item below.
 | **FET/driver temp** (was mislabeled "battery temp / BTS") | ADC PA3 — NTC β3380, −40…140 °C | **internal FET/driver over-temp sensor, 125 °C fault `0x4029`** (§0.6 V8); battery temp for temp-comp arrives via **CAN/BMS**, not this pin |
 | Battery voltage | ADC PC5 (IN15) — 34.3333:1 divider | 3.3 V Vref → ≈113.3 V full-scale |
 | ADC calibration | internal temp / VREFINT / VBAT (slots 4–6) | 7-ch scan, 12-bit, **×4 software averaging** (no HW oversampler on F072 — §0.6 V4); 10 kΩ NTC pull-up |
-| Charge current | **INA226 (only), hardwired, I²C1 @ 0x40** — SHUNT_V reg 0x01 | regs 0x01/0x02/0x06, 16-bit big-endian; CALIBRATION computed at runtime from the configured shunt (§0.6 V3). The earlier "INA226/228/238 auto-detect via die-ID" claim is **refuted** — no ID register is ever read |
+| Charge current | **INA226 (only), hardwired, I²C2 @ 0x40** — SHUNT_V reg 0x01 | regs 0x01/0x02/0x06, 16-bit big-endian; CALIBRATION computed at runtime from the configured shunt (§0.6 V3). The earlier "INA226/228/238 auto-detect via die-ID" claim is **refuted** — no ID register is ever read. **Bus corrected to I²C2** (§0.6 V7): V3 read the pre-DeInit state as I²C1, but the boot probe fails on the NULL hi2c1 handle and the driver DeInits I²C1 and rebinds to hi2c2 — so the INA226 runs on I²C2 alongside the EEPROM (✅-from-binary; 🔵 scope PB10/PB11 vs PB6/PB7 to confirm) |
 | Bus voltage at shunt | INA226 BUS_V reg 0x02 | batt or alt per ShuntAtBat; conversion-ready gated via Mask/Enable reg 0x06 |
 | Stator / RPM | **PA10 — EXTI rising edge** + TIM2 free-running 32-bit counter @ ~979.6 kHz as timebase | software CNT-diff per edge, **not** TIM2 input capture (§0.6 V1+V2; was 🔴) |
 | Battery-capacity DIP switches | **PA4, PA5, PA6, PA7 + PB0, PB1, PB2** — all pull-up | §0.6 V1; PA7 and PB2 were previously undocumented |
 | System tick | **TIM7** | §0.6 V1 |
 | Active IRQ set | **EXTI4_15, DMA1_CH1, ADC, TIM7, CAN, USB** — only these six | §0.6 V1; everything else is polled/DMA |
 | CAN (RV-C/N2K/J1939/Victron) | PB8 = RX, PB9 = TX (AF4) | |
-| I²C1 | PB6 = SCL, PB7 = SDA (AF1) | hosts the INA226 @ 0x40 |
-| I²C2 | PB10 = SCL, PB11 = SDA (AF1) | device address 🔴 — see config storage below |
+| I²C1 | PB6 = SCL, PB7 = SDA (AF1) | inited at boot but **DeInit'd** — the INA226 probe on the NULL hi2c1 handle fails deterministically, so the driver tears down I²C1 and rebinds to I²C2 (§0.6 V7). Goes idle after boot 🔵 |
+| I²C2 | PB10 = SCL, PB11 = SDA (AF1) | **active bus — hosts BOTH the INA226 @ 0x40 AND the 24C16 EEPROM @ 0x50** (§0.6 V7, ✅-from-binary; 🔵 scope to confirm bus). Polled HAL, not interrupt-driven |
+| EEPROM write-protect (/WP) | **PA15 — GPIO output** | driven **LOW** to permit an EEPROM write, **HIGH** to protect afterward (`fn_E694` toggles it around the page-write loop; §0.6 V7). This is the "GPIOA toggle line" earlier flagged as unidentified |
 | USB FS (CDC config) | PA11 = DM, PA12 = DP | `$XXX:` protocol channel |
 | Watchdog | IWDG | safety |
 | ADC DMA | DMA1 | circular scan |
@@ -40,9 +41,9 @@ See `WS500_HARDWARE_SPEC.md` for the derivation of every item below.
 | Function | Status | What's needed |
 |---|---|---|
 | Control input PB13 | 🟡 confirmed input, polled, gates a branch | = Enable/Ignition **or** Feature-In; splitting the two reads control logic → bench |
-| Status outputs PA0/PA9/PA15/PB14 | 🟡 confirmed outputs, driven 0/1 by state | Lamp/Feature-Out (wire 2) + status LEDs; which is which → bench |
+| Status outputs PA0/PB14 | 🟡 confirmed outputs, driven 0/1 by state | Lamp/Feature-Out (wire 2) + status LEDs; which is which → bench. (PA15 now resolved = EEPROM /WP, §0.6 V7; the driver at `0x08014050`/`0x08014084` once tied to config storage is actually a console/debug TX path that toggles PA9 — not the config store) |
 | Aux timers TIM3 / TIM15-17 | 🟡 HAL clock-dispatch chain only; none in the active IRQ set (§0.6 V1) | confirm if any drives Feature-Out PWM |
-| Config storage location | 🔨 **NOT internal flash** (no flash-write code in the image) and **NOT EEPROM @ 0x50** (no 0xA0 transactions) — both refuted (§0.6 V7) | prime suspect: the interrupt-driven ~300-byte device on **I²C2** — extract its 7-bit address + boot-read/config-write pattern from the driver at `0x8014050`/`0x8014084` |
+| Config storage location | ✅ **external 24C16-class serial EEPROM @ 7-bit 0x50 on I²C2** (2 KB, 8×256-byte blocks, 16-byte pages) — **NOT** internal flash (no flash-write code in the image) (§0.6 V7). The earlier "EEPROM @ 0x50 refuted — no 0xA0 transactions" verdict is **overturned**: the 8-bit device address is *computed* at runtime (`0xA0 \| ((wordaddr>>8)&7)<<1`), so a constant/byte search couldn't see it | Resolved from binary: read `fn_DDC4` (1-byte word addr, 256-byte chunking, retry×3), write `fn_E694`→`HAL_I2C_Mem_Write` (16-byte page programming, 7 ms osDelay/page = write-cycle wait ⇒ EEPROM not FRAM). Records are 0x84 bytes, magic (0x873A/0xC03A, 0xF9AC/0xA97) + CRC validated; boot-load cluster 0x0800C3E0–0x0800C5F0; write-on-change is read-modify-write. **/WP = PA15** |
 | Digital I/O pin roster | 🟡 pins known, functions not | assign each of the remaining seen GPIO pins (PC13-15, PB3-5, PC4, PC10) |
 
 > **Struck (refuted by §0.6 V3):** the "secondary I²C devices 0x0C / 0x10 / 0x4C" row —
@@ -65,13 +66,17 @@ See `WS500_HARDWARE_SPEC.md` for the derivation of every item below.
 **Complete:** the full sensing + actuation chain — field PWM (143.2 Hz; software fault
 cutoff), all temperatures (incl. the corrected PA3 = FET/driver sensor), battery voltage,
 current & bus voltage (INA226), RPM (PA10 EXTI + TIM2 timebase), DIP bank, system tick,
-CAN, USB config, I²C1. This is enough to build and bench the core regulator.
+CAN, USB config, and the I²C2 bus (INA226 @ 0x40 + 24C16 EEPROM config store @ 0x50).
+This is enough to build and bench the core regulator.
 
 **Remaining firmware traces (in priority order):**
-1. Config store: identify the I²C2 device address + read/write pattern (§0.6 V7).
+1. ~~Config store: identify the I²C2 device address + read/write pattern.~~
+   **RESOLVED (§0.6 V7)** — it is a **24C16-class EEPROM @ 0x50 on I²C2**, /WP on PA15,
+   polled HAL; boot-read + write-on-change with magic/CRC-validated 0x84-byte records.
+   Only the I²C1-vs-I²C2 bus assignment carries a Stage-A scope caveat 🔵.
 2. Digital I/O *labels* — pins are found (in: PB13 enable/feature; out:
-   PA0/PA9/PA15/PB14). Still need which input = Enable vs Feature-In, and which
-   output = Lamp vs status LED (trace each pin's usage, or bench).
+   PA0/PB14; PA15 = EEPROM /WP resolved). Still need which input = Enable vs Feature-In,
+   and which output = Lamp vs status LED (trace each pin's usage, or bench).
 3. Confirm remaining aux-timer roles (Feature-Out PWM?).
 
 **Board-dependent items** (field-driver topology, exact resistor values, PA1-vs-PA2 probe

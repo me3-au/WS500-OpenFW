@@ -217,4 +217,36 @@ void test_statemachine(void)
         ctrl_command_t cmd2 = ctrl_tick(&e2, &m2, &c, &p, &gs, 100);
         CHECK(cmd2.state == CTRL_BULK);
     }
+
+    /* 13) [SIL-found 2026-07] Shunt dropout: watts_batt = NaN must never reach
+     *     the field command (effort/duty stay finite) and must NOT latch —
+     *     previously NaN stuck in the effort integrator permanently. */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_measured_t ok = M(3.30f);
+        for (int i = 0; i < 10; i++) ctrl_tick(&e, &ok, &c, &p, &g, 100);
+        ctrl_measured_t bad = M(3.30f); bad.amps_batt = NAN; bad.watts_batt = NAN;
+        ctrl_command_t cmd = {0};
+        for (int i = 0; i < 10; i++) cmd = ctrl_tick(&e, &bad, &c, &p, &g, 100);
+        CHECK(isfinite(cmd.field_effort));
+        CHECK(isfinite(cmd.field_duty));
+        for (int i = 0; i < 10; i++) cmd = ctrl_tick(&e, &ok, &c, &p, &g, 100);
+        CHECK(isfinite(cmd.field_effort));
+        CHECK(cmd.field_effort > 0.0f);          /* regulation resumed */
+    }
+
+    /* 14) [SIL-found 2026-07] Lost VBat sense: v_supply NaN must yield a ZERO
+     *     duty, not NaN (ctrl_duty_max previously passed NaN through). */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_measured_t ok = M(3.30f);
+        for (int i = 0; i < 10; i++) ctrl_tick(&e, &ok, &c, &p, &g, 100);
+        ctrl_measured_t bad = M(3.30f);
+        bad.vbat_pack_v = NAN; bad.vcomp_pack_v = NAN; bad.v_supply_v = NAN;
+        ctrl_command_t cmd = {0};
+        for (int i = 0; i < 10; i++) cmd = ctrl_tick(&e, &bad, &c, &p, &g, 100);
+        CHECK(cmd.faults & CTRL_FAULT_LOST_VBAT_SENSE);
+        CHECK(isfinite(cmd.field_duty));
+        CHECK_FEQ(cmd.field_duty, 0.0f, 1e-6);
+    }
 }

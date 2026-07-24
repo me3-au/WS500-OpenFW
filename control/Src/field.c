@@ -9,7 +9,9 @@ float ctrl_duty_max(const ctrl_globals_t *g, float v_supply_v)
     if (g->allow_full_field_48v) return 1.0f;
 
     float rotor_v = isnan(g->rotor_v_max) ? g->rotor_rated_v : g->rotor_v_max;
-    if (v_supply_v <= 0.0f || rotor_v <= 0.0f) return 0.0f;  /* fail-safe */
+    /* [SIL-found 2026-07] Negated-positive test so NaN (lost VBat/supply sense)
+     * also fails safe to 0 — `v <= 0` is false for NaN and produced a NaN duty. */
+    if (!(v_supply_v > 0.0f) || !(rotor_v > 0.0f)) return 0.0f;  /* fail-safe */
 
     float dm = rotor_v / v_supply_v;
     if (dm < 0.0f) dm = 0.0f;

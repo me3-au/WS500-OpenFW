@@ -17,6 +17,18 @@ jobs:
             -lm -o control_tests
           ./control_tests
 
+  sil:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build & run SIL plant-simulation gauntlet (PROJECT_PLAN §8.1)
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -I control/Inc -I sim \
+            control/Src/*.c sim/*.c \
+            -lm -o sil_tests
+          ./sil_tests
+
   firmware:
     runs-on: ubuntu-latest
     steps:
