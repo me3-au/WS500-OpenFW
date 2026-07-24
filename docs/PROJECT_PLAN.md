@@ -333,6 +333,12 @@ mishap also takes down a live charging system. Two consequences:
   rotor (100 % duty ≈ 12 A / ~580 W into a 3 A winding). The CONTROL_SPEC rotor duty clamp
   and the never-100 %-duty bootstrap cap (§0.5) are *the* critical protections here, and
   both must be proven in virtual (§8) before any custom firmware runs on this unit.
+  - **★ Confirmed on hardware (2026-07-24):** a live stock charge run (serial `AST` capture)
+    showed the WS500 **pinning Field% at exactly 25 %** — holding there while delivering
+    140 A / 7.6 kW at ~2330 RPM, and ramping to 25 % in ~2 %/s steps then stopping. The unit
+    is **field-clamp-limited, not voltage-limited** (BatV reached only ~54.7 V vs the 56 V
+    target). So the 25 % rotor clamp our design specifies is exactly what the product does —
+    our firmware must reproduce it. Reference trace: `ws500_chargerun.log` (session capture).
 - **Hardware access is staged — readings first:**
   - **Stage A — observation only (safe now, stock firmware untouched):** USB `$` protocol
     readout (dump + archive the full stock config — also documents the stock parameter set),
@@ -349,9 +355,16 @@ mishap also takes down a live charging system. Two consequences:
 ## 6. Flash / update / rollback / backup / recovery — *to extract to `FLASH_AND_RECOVERY.md`*
 
 **Chip facts:** STM32F072xB = 128 KB single-bank flash → no A/B slots (not worth halving flash).
-- **Unbrickable floor:** the ST **system DFU bootloader in ROM** can't be erased. Force
-  system-memory boot via the **BOOT0 access point** (locate/verify on the board — open item in
-  [`IO_COVERAGE.md`](IO_COVERAGE.md), "needs board/schematic").
+- **Unbrickable floor:** the ST **system DFU bootloader in ROM** can't be erased.
+  **DFU entry is already available and documented (confirmed 2026-07-24):** the manual's
+  firmware-upgrade procedure — **press-and-hold the reset button** — enters the ST ROM DFU
+  bootloader (the stock `.dfu` carries VID 0x0483 / PID 0xDF11, ST's system-bootloader IDs;
+  the device re-enumerates as "STM32 BOOTLOADER"). So we do **not** need to locate a BOOT0
+  access point to enter DFU — that IO_COVERAGE open item is resolved for the entry path
+  (BOOT0 still relevant only as a fallback if the app ever won't hand off). **M1 hook:** the
+  read-only full-flash backup + RDP check + clean DFU exit is the concrete M1 rehearsal;
+  needs dfu-util or STM32CubeProgrammer (not yet installed). Discipline: **read/upload only,
+  never write/erase, never touch RDP** (disabling RDP mass-erases the stock image).
 - **Backup first:** full SWD flash readout of the stock unit before anything. ⚠️ If RDP ≥1 is
   set, readout is blocked and disabling it mass-erases — then the stock DFU image file we
   already hold *is* the backup; prove it restores before relying on it.
@@ -446,6 +459,13 @@ a 48 V system (§5). Four virtual layers, cheapest first; all run in CI:
   example-based: sweep-based invariant checks (field ≤ clamp under *all* input
   combinations; faults latch; arbitration monotonicity), boundary sweeps on profile
   parameters, and randomized sensor-noise runs with fixed seeds.
+
+**Reference data for 8.1 (captured 2026-07-24):** a live stock charge run over serial gives
+a real trace to validate the plant model + rotor clamp against — 25 % field clamp,
+alternator output 140 A / 7.6 kW at ~2330 RPM / 25 % field, field ramp ≈2 %/s, FET-temp rise
+31→45 °C under 140 A load, RPM sensing valid under real stator signal. Archive
+`ws500_chargerun.log` (and a decoded CSV) as a SIL fixture. Stage-A serial capability
+(read-only `$` query + passive monitor via PowerShell `SerialPort`) is proven and repeatable.
 
 *Gate:* Stage C in §5 (first custom-firmware flash) requires 8.1–8.4 green in CI, plus the
 §0.6 queue resolved for every constant the flashed build uses.
