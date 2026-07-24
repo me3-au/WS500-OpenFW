@@ -1,9 +1,10 @@
 /*
  * sensors.c — ADC1 7-channel oversampled acquisition + scaling (scaling = TODO).
  *
- * Acquisition mirrors the stock design (fact): 7-channel scan, DMA circular, x4
- * software oversample+average. Channel->signal binding and the raw->engineering
- * scaling are NOT yet known and must be resolved by signal injection (see README).
+ * Acquisition mirrors the stock design (fact): 7-channel 12-bit scan, DMA
+ * circular, x4 software averaging (F072 has no HW oversampler — §0.6 V4).
+ * Channel->signal binding + scaling constants are recovered from the stock
+ * binary (board.h); the NTC divider R values still need bench confirmation.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -53,7 +54,8 @@ void sensors_init(void)
     HAL_ADCEx_Calibration_Start(&hadc1);
     HAL_ADC_Start_DMA(&hadc1, (uint32_t*)s_dma, ADC_OVERSAMPLE * ADC_SCAN_LEN);
 
-    /* Current/bus-voltage monitor at the shunt (INA226/228/238 @ I2C 0x40). */
+    /* Current/bus-voltage monitor at the shunt (INA226, hardwired @ I2C1 0x40 —
+     * §0.6 V3: no variant auto-detect in stock). */
     ina2xx_init(SHUNT_FULL_SCALE_A, SHUNT_FULL_SCALE_MV);
 }
 
@@ -96,12 +98,14 @@ void sensors_read(sensor_readings_t *out)
     /* Battery voltage: PC5 through the recovered 34.33:1 divider (fact). */
     out->vbat_pack_v = sensors_raw(SENSOR_CH_VBAT) * lsb * SENSOR_VBAT_DIVIDER;
 
-    /* Temperatures: NTC Beta model with the recovered Beta values (fact).
-     * Confirm R_FIXED/R0 on the board. PA1 = alt NTC, PA2 = driver-stage NTC,
-     * PA3 = battery NTC (which of PA1/PA2 is alt vs internal: confirm on bench). */
-    out->alt_temp_c    = ntc_temp_c(SENSOR_CH_TEMP_A1,   SENSOR_NTC_BETA_ALT);
-    out->driver_temp_c = ntc_temp_c(SENSOR_CH_TEMP_A2,   SENSOR_NTC_BETA_ALT);
-    out->batt_temp_c   = ntc_temp_c(SENSOR_CH_TEMP_BATT, SENSOR_NTC_BETA_BATT);
+    /* Temperatures (stock binary disasm 2026-07-23, PROJECT_PLAN §0.6 V8):
+     * PA1/PA2 = beta-3950 alternator/probe NTCs (which is which: bench);
+     * PA3 = beta-3380 FET/driver-stage over-temp sensor (stock 125C fault) —
+     * NOT battery. Battery temp for temp-comp arrives via CAN/BMS (TODO: plumb
+     * from can_n2k); report NAN until then so control treats it as absent. */
+    out->alt_temp_c    = ntc_temp_c(SENSOR_CH_TEMP_A1,  SENSOR_NTC_BETA_ALT);
+    out->driver_temp_c = ntc_temp_c(SENSOR_CH_TEMP_FET, SENSOR_NTC_BETA_FET);
+    out->batt_temp_c   = NAN;   /* was PA3 — mislabeled; see §0.6 V8 */
 
     /* Charge current + local bus voltage: INA2xx at the shunt (battery or
      * alternator side per ShuntAtBat) — NOT the internal ADC. */

@@ -63,7 +63,7 @@ int main(void)
                 .batt_temp_c  = r.batt_temp_c,
                 .driver_temp_c= r.driver_temp_c,
                 .rpm          = 0.0f,
-                .rpm_state    = CTRL_RPM_LOST,          /* TODO: TIM2/CAN fusion */
+                .rpm_state    = CTRL_RPM_LOST,          /* TODO: PA10-EXTI+TIM2 / CAN fusion */
                 .run_state    = CTRL_RUN_NOT_RUNNING,
                 .soc_pct      = -1.0f,
                 .soc_trusted  = false,

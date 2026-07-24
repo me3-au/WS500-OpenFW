@@ -1,10 +1,13 @@
 /*
- * ina2xx.h — TI INA226/INA228/INA238 current+power monitor over I2C (addr 0x40).
+ * ina2xx.h — TI INA226 current+power monitor over I2C1 (addr 0x40).
  *
  * The WS500's single current input (500A/50mV shunt, battery- or alternator-side
- * per $CCN ShuntAtBat) is read by this monitor — confirmed from the stock firmware
- * (reads SHUNT_V/BUS_V/POWER at 0x40, auto-detects via DIE_ID). The INA reports
- * both the charge current and the local bus voltage.
+ * per $CCN ShuntAtBat) is read by this monitor — confirmed from the stock binary
+ * (disasm 2026-07-23, §0.6 V3): INA226 only, hardwired; stock reads regs 0x06
+ * (Mask/Enable conversion-ready), 0x02 (bus V), 0x01 (shunt V), 16-bit BE, and
+ * computes CALIBRATION at runtime from the configured shunt. It never reads
+ * DIE_ID — our optional variant probe below is a sanity check, not stock
+ * behavior. The INA reports both charge current and local bus voltage.
  *
  * SPDX-License-Identifier: MIT
  */

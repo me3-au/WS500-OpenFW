@@ -1,6 +1,8 @@
 /*
  * field_drive.h — alternator field PWM (TIM1) abstraction.
- * PA8 = TIM1_CH1 (AF2); TIM1 BKIN = hardware field cutoff on fault.
+ * PA8 = TIM1_CH1 (AF2). Fault cutoff = software MOE-clear, as in stock (the stock
+ * WS500 does NOT use TIM1 BKIN — BDTR.BKE=0, §0.6 V1/V2); BKIN remains an
+ * optional improvement only if a fault comparator is ever wired.
  * SPDX-License-Identifier: MIT
  */
 #ifndef WS500_FIELD_DRIVE_H

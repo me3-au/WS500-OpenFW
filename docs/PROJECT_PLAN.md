@@ -3,8 +3,12 @@
 Status legend: ✅ done · 🔨 in progress · ⬜ not started · 🧩 decision needed
 
 Repo is **public** at `github.com/me3-au/WS500-OpenFW` (personal account `me3-au`). This
-doc is the master tracker; the deliverables/milestones below should now be mirrored as
-**GitHub Issues + Milestones** (the repo is already pushed — do this now, not "after push").
+doc is the master tracker, mirrored as **GitHub Issues + Milestones** (7 milestones M0–M6).
+**Issue sync 2026-07-24:** closed #5 (BOOT0 — DFU entry via reset button), #9 (BKIN —
+refuted V1/V2), #12 (state machine — done in `control/`), #14 (superseded by the two
+specs); created #23–#35 covering OSS hygiene, versioning, Renode (#19→GH#25), the SIL
+gauntlet (GH#26), robustness §7 (GH#27), decision #6a (GH#28), V7 (GH#29), web client,
+CAN Rx, RV-C, SAFETY.md, spec gaps, telemetry.
 
 **Authoritative design direction:** the **two-stage LFP** model in
 [`CONTROL_SPEC_NEXTGEN.md`](CONTROL_SPEC_NEXTGEN.md) (Draft B) **supersedes** the older
@@ -165,7 +169,7 @@ clash, V3 — evolution can't excuse an impossible decode).
 | V4 | **ADC scaling — RESOLVED from the stock binary (2026-07-23).** 7-ch scan, **×4 software averaging** (routine `0x08014242`; F072 has no HW oversampler — confirmed), **12-bit** (FS 4095). Constants: **β3950** (PA1/PA2) and **β3380** (PA3) stored as *integer* literals (why the earlier float search missed them); **34.3333** divider + **3.3** Vref (PC5, FS ≈113.3 V); **10 kΩ** NTC pull-up. NTC = Beta/Steinhart (`logf`); voltage = linear. AF pin map independently matches V1 | stock binary (done) | scaling constants confirmed for our `sensors.c`; "×4 oversample" wording corrected | ✅ |
 | V5 | Mine the upstream `CPU_STM32` block (`SmartRegulator.h` v1.3.1) for WS500 facts | done 2026-07-23 | **Done — see outcome note below.** Corroborated: TIM1_CH1 field PWM, TIM2-as-µs-counter stator method, INA226 @0x40 regs 0x01/0x02 (+CONFIG 0x00 = `0x4523`, STATUS 0x06, 2.5 µV shunt LSB), IWDG use, 8 DIP inputs, Feature-In/Out, MCU family (alt target STM32F078xx). Upstream-silent: all GPIO pins (cubeMX-generated, not in source), BKIN, CH3N. New: prototype field PWM = **244 Hz**; config in **external I²C EEPROM @0x50**; **β3380 = FET temp, not battery** | ✅ |
 | V6 | Boot the stock image in Renode (#19); log peripheral writes (TIM1 config, ADC scan setup, I²C traffic to 0x40 **and 0x50**) | dynamic corroboration of V1–V3, V7 | | ⬜ |
-| V7 | **Config storage — narrowed (2026-07-23), one loose end.** From the stock binary: EEPROM @0x50 **REFUTED** (no 0xA0 transactions); **internal-flash programming REFUTED** (FLASH unlock keys 0x45670123/0xCDEF89AB and KEYR/CR/SR writes are entirely absent — and flash-write *code* would be in the shipped image, which is complete, so its absence is conclusive). **Prime suspect: the I²C2 device** — I²C2 is a second inited bus (handle 0x20002A20, different TIMINGR) running an **interrupt-driven ~300-byte peripheral** that toggles a GPIOA line; C read it as a display/aux but it's the only remaining persistence path and 300 bytes fits a config blob. **Loose end:** identify the I²C2 device 7-bit address + whether it's read at boot / written on `$` config change (→ EEPROM/FRAM = config store, vs display). Cross-check: a serial power-cycle test (read config, cycle, re-read) proves persistence exists | disassemble the I²C2 driver `0x8014050`/`0x8014084` for its DevAddress; Stage-A serial persistence test | resolves the M4 config-store design (I²C EEPROM/FRAM driver vs other) | 🔨 |
+| V7 | **Config storage — narrowed (2026-07-23), one loose end.** From the stock binary: EEPROM @0x50 **REFUTED** (no 0xA0 transactions); **internal-flash programming REFUTED** (FLASH unlock keys 0x45670123/0xCDEF89AB and KEYR/CR/SR writes are entirely absent — and flash-write *code* would be in the shipped image, which is complete, so its absence is conclusive). **Prime suspect: the I²C2 device** — I²C2 is a second inited bus (handle 0x20002A20, different TIMINGR) running an **interrupt-driven ~300-byte peripheral** that toggles a GPIOA line; C read it as a display/aux but it's the only remaining persistence path and 300 bytes fits a config blob. **Loose end:** identify the I²C2 device 7-bit address + whether it's read at boot / written on `$` config change (→ EEPROM/FRAM = config store, vs display). Cross-check: a serial power-cycle test (read config, cycle, re-read) proves persistence exists. **Preliminary (2026-07-24, deeper disassembly pass — write-up pending):** an EEPROM write path *was* found after all — `HAL_I2C_Mem_Write` (fn @~0xE694 via 0x800300C) with DevAddress `0xA0 | ((offset>>16)&7)<<1` (7-bit **0x50 family with block-select bits** — the earlier "no 0xA0 transactions" search missed the *computed* address), 1-byte mem-address, **16-byte page chunking**, **7 ms write-cycle delay per page** (⇒ EEPROM, not FRAM), gated by **PA15 as /WP** (low to write, high to protect — the GPIOA toggle). Config-load cluster @0x0800C3xx reads 0x84-byte records with magic (0x873A/0xC03A…) + CRC. Still to confirm: which I²C bus handle this driver binds (I²C1 vs I²C2) | disassemble the I²C2 driver `0x8014050`/`0x8014084` for its DevAddress; Stage-A serial persistence test | resolves the M4 config-store design (I²C EEPROM/FRAM driver vs other) | 🔨 |
 | V8 | **β3380 channel identity — RESOLVED from the stock binary (2026-07-23), confidence med-high.** PA3/β3380 is the **FET/driver over-temp sensor, NOT battery**: its result (`0x200003E0`) drives a **125 °C over-temp fault** (`0x4029`), an over-temp status classifier, and telemetry — and **nothing feeds any `V_target += k·(Tref−T)` temp-comp**. Battery temp for temp-comp arrives over **CAN/BMS**, not the local ADC (agrees with upstream VSR; refutes our "BTS" label). **Design consequence:** our temp-comp must source battery temp from CAN (or a correctly-identified harness input), and PA3 belongs to the **thermal governor** (`thermal.c`), not temp-comp. β3950 (PA1/PA2, 160 °C clamp) are the alternator/hot-probe channels | stock binary (done) | corrects the sensor labelling; **redirects temp-comp sourcing and CONTROL_SPEC §5.1** | ✅ |
 
 **V5 outcome note (2026-07-23):** the upstream `CPU_STM32` block is a **skeletal 2018
@@ -213,7 +217,7 @@ settles most of them):
 
 | # | Deliverable | Artifact | Milestone | Status |
 |---|-------------|----------|-----------|--------|
-| 1 | Project management | this doc → GitHub Issues/Milestones | M0 | 🔨 |
+| 1 | Project management | this doc → GitHub Issues/Milestones (synced 2026-07-24) | M0 | ✅ |
 | 2 | Git hosting | remote exists, public | M0 | ✅ |
 | 3 | HW documentation | `WS500_HARDWARE_SPEC.md`, `IO_COVERAGE.md` | M0–M2 | ✅ (open items) |
 | 4 | Control/design spec | `CONTROL_SPEC_NEXTGEN.md` + `PROFILE_SPEC_LFP.md` (+ fault codes, loop numerics); **cross-referenced against the GPL VSR source (§0.5)** | M2.5–M3 | 🔨 |
@@ -231,8 +235,8 @@ settles most of them):
 | 14 | Bring-up test firmware | `test-fw/` (§4). *ADC binding already recovered — this confirms scaling on bench* | M2 | ⬜ |
 | 15 | Bench safety | `SAFETY.md` (§5); gates every hardware milestone | all HW | 🔨 |
 | 16 | **License + third-party NOTICE** | **LICENSE = MIT** ✅ + `NOTICE` ✅ (CMSIS Apache-2.0 / HAL BSD-3 / NMEA2000 MIT-planned; Thomason courtesy attribution; **no GPL code in-tree — VSR is reference-only**); README/OPEN_SOURCE license text aligned | **M0 (now)** | ✅ |
-| 17 | **OSS hygiene** | `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue/PR templates, README badges | M0 | ⬜ |
-| 18 | **Versioning + release** | `VERSION`/macro, `CHANGELOG.md`, tag/release flow | M0→M6 | ⬜ |
+| 17 | **OSS hygiene** | `CONTRIBUTING.md` (no-GPL + safety-gate rules), `CODE_OF_CONDUCT.md`, `SECURITY.md` (unsafe-charging = security-priority), issue/PR templates incl. hardware-fact provenance template, README badges — all done 2026-07-24 | M0 | ✅ |
+| 18 | **Versioning + release** | `VERSION` (0.1.0-dev) + `Core/Inc/version.h` + `CHANGELOG.md` ✅ (2026-07-24); tag/release flow exercised at M6 | M0→M6 | 🔨 |
 | 19 | **Emulation harness** | Renode model (STM32F072 + peripherals + INA stub) for hardware-free dev/CI; part of the §8 virtual-first strategy with the SIL plant sim (8.1) | M0→M1 | ⬜ |
 | 20 | **Telemetry / logging** | log stream over USB CDC / CAN (per `CONTROL_SPEC`) | M4–M5 | ⬜ |
 | 21 | **Robustness / error reporting** | §7: safe-state funnel, IWDG checkpoint policy, reset-cause + `.noinit` crash records, HardFault/NMI handlers, flash CRC + SRAM parity, PVD brown-out, peripheral error budgets | M3–M4 | ⬜ |
@@ -244,9 +248,9 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
 - **M0 — Infrastructure** *(mostly done)*.
   Done: public remote ✅, CI (`.github/workflows/build.yml`) ✅, HAL vendoring
   (`scripts/fetch_deps.sh`) ✅, `stm32f0xx_hal_conf.h` ✅.
-  Done also: **license + NOTICE (#16)** ✅ (MIT + NOTICE, 2026-07-23).
-  Remaining: OSS hygiene (#17), versioning scaffold (#18),
-  convert this table to Issues/Milestones, **stand up the Renode emulation harness (#19)**.
+  Done also: **license + NOTICE (#16)** ✅ (MIT + NOTICE, 2026-07-23); **OSS hygiene
+  (#17)** ✅, **versioning scaffold (#18)** ✅, **issue/milestone sync** ✅ (all
+  2026-07-24). Remaining: **stand up the Renode emulation harness (#19 / GH#25)**.
   *Exit:* repo builds green in CI; MIT LICENSE + NOTICE in place; issues created; emulator
   runs the built ELF far enough to exercise `main()`.
 - **M1 — Backup & recovery proven** → *no custom firmware is flashed before this passes.*

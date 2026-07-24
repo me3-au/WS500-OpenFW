@@ -37,11 +37,13 @@ void field_drive_init(void)
     HAL_TIM_PWM_ConfigChannel(&htim1, &oc, FIELD_TIM_CH);
 
     /* Break input: TIM1_BKIN would force outputs to idle (off) in hardware on a
-     * fault line. NOTE (§0.6 V2): the STOCK WS500 does NOT use hardware BKIN — it
-     * cuts the field in software by clearing MOE (see field_drive_fault_cutoff).
-     * Keeping BKIN is a deliberate improvement, but only valid if a BKIN pin is
-     * actually routed to a fault comparator on the board (pending §0.6 V1 / bench).
-     * Until confirmed, MOE-clear is the proven primary cutoff. */
+     * fault line. NOTE (§0.6 V1+V2, resolved 2026-07-23): the STOCK WS500 does NOT
+     * use hardware BKIN — BDTR.BKE=0 and no break-AF pin is configured anywhere in
+     * the image; it cuts the field in software by clearing MOE (see
+     * field_drive_fault_cutoff). Keeping BKIN here is a deliberate optional
+     * improvement, valid only if a fault comparator is ever wired to a
+     * break-capable pin (none is routed in stock). MOE-clear is the proven
+     * primary cutoff. */
     TIM_BreakDeadTimeConfigTypeDef bdt = {0};
     bdt.OffStateRunMode  = TIM_OSSR_DISABLE;
     bdt.OffStateIDLEMode = TIM_OSSI_DISABLE;

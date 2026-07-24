@@ -18,7 +18,9 @@
 /* ---- Field-drive PWM (alternator field) ----------------------------------- *
  * PA8  = TIM1_CH1  (AF2)  — primary field PWM output
  * PB15 = TIM1_CH3N (AF2)  — complementary/aux (confirm role vs field-driver topology)
- * TIM1 break input (BKIN) provides hardware fault cutoff of the field.          */
+ * BKIN: NOT used by stock (BDTR.BKE=0, no break-AF pin — binary disasm 2026-07-23,
+ * PROJECT_PLAN §0.6 V1+V2). Stock field fault cutoff is a software MOE-clear; we
+ * keep BKIN only as an optional improvement if a fault comparator is ever wired.  */
 #define FIELD_TIM              TIM1
 #define FIELD_TIM_CH           TIM_CHANNEL_1
 #define FIELD_PWM_PORT         GPIOA
@@ -42,14 +44,17 @@
  *   [4] temp sensor  [5] VREFINT  [6] VBAT
  *
  * Channel->signal binding RECOVERED FROM FIRMWARE (measurement routine at
- * 0x08014230; conversion constants decoded):
- *   [0] PA1  = NTC thermistor, Beta 3950, clamp -40..160C  (alternator-class temp)
- *   [1] PA2  = NTC thermistor, Beta 3950, clamp -40..160C  (alternator-class temp)
- *   [2] PA3  = NTC thermistor, Beta 3380, clamp -40..140C  (battery-class temp)
- *   [3] PC5  = analog VOLTAGE, Vref 3.3, divider 34.33:1   (battery voltage)
- * (Alt-vs-battery split between PA1/PA2 is a harness detail; both are temp.)
- * NOTE: shunt CURRENT and alternator VOLTAGE are NOT on this ADC scan -> they
- * arrive via CAN and/or I2C (still to be traced).                              */
+ * 0x08014230; conversion constants decoded; §0.6 V4/V8):
+ *   [0] PA1  = NTC thermistor, Beta 3950, clamp -40..160C  (alternator/probe temp)
+ *   [1] PA2  = NTC thermistor, Beta 3950, clamp -40..160C  (alternator/probe temp)
+ *   [2] PA3  = NTC thermistor, Beta 3380, clamp -40..140C  (FET/DRIVER temp — NOT
+ *              battery: drives the stock 125C over-temp fault 0x4029; battery temp
+ *              for temp-comp arrives via CAN/BMS. §0.6 V8)
+ *   [3] PC5  = analog VOLTAGE, Vref 3.3, divider 34.3333:1 (battery V, FS ~113.3V)
+ * (Which of PA1/PA2 is ATS vs the second probe is a harness detail — bench.)
+ * 10k NTC pull-up (ratio from FW; exact resistor values are board facts).
+ * NOTE: shunt CURRENT and shunt-side bus VOLTAGE are NOT on this ADC scan ->
+ * they come from the INA226 on I2C1 @0x40 (§0.6 V3).                            */
 #define ADC_PORT_A             GPIOA
 #define ADC_PINS_A             (GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3)
 #define ADC_PORT_C             GPIOC
@@ -62,28 +67,37 @@
 /* Logical signal -> ADC buffer slot (from firmware). */
 #define SENSOR_CH_TEMP_A1      0U      /* PA1: NTC Beta 3950 (-40..160C) */
 #define SENSOR_CH_TEMP_A2      1U      /* PA2: NTC Beta 3950 (-40..160C) */
-#define SENSOR_CH_TEMP_BATT    2U      /* PA3: NTC Beta 3380 (-40..140C) */
-#define SENSOR_CH_VBAT         3U      /* PC5: voltage, divider 34.33:1 */
+#define SENSOR_CH_TEMP_FET     2U      /* PA3: NTC Beta 3380 (-40..140C) — FET/driver temp (§0.6 V8) */
+#define SENSOR_CH_VBAT         3U      /* PC5: voltage, divider 34.3333:1 */
 #define SENSOR_SLOT_TEMPSENSOR 4U
 #define SENSOR_SLOT_VREFINT    5U
 #define SENSOR_SLOT_VBAT_INT   6U
 
 /* Recovered scaling constants (hardware facts). */
 #define SENSOR_NTC_BETA_ALT    3950.0f
-#define SENSOR_NTC_BETA_BATT   3380.0f
+#define SENSOR_NTC_BETA_FET    3380.0f  /* PA3 FET/driver sensor (§0.6 V8) */
 #define SENSOR_VBAT_DIVIDER    34.3333f
 #define SENSOR_VREF_NOMINAL_V  3.3f
 
 /* ---- Stator / RPM input (manual wire 8, Yellow) --------------------------- *
- * AC frequency from the alternator stator, measured via TIM2 input capture
- * (stock uses handle 0x200029E0 -> TIM2, diffs successive CNT reads for period). */
-#define STATOR_TIM             TIM2
+ * PA10 = EXTI10 rising-edge input (NOT a timer capture channel). TIM2 is a plain
+ * free-running 32-bit counter used as the timebase (stock: ~979.6 kHz, 1.02 us/
+ * tick); the EXTI ISR reads TIM2->CNT on each stator edge and RPM comes from the
+ * software CNT difference. Stock binary disasm 2026-07-23, §0.6 V1+V2 — this
+ * corrects the earlier "TIM2 input capture" description.                        */
+#define STATOR_PORT            GPIOA
+#define STATOR_PIN             GPIO_PIN_10
+#define STATOR_EXTI_IRQn       EXTI4_15_IRQn   /* PA10 -> EXTI line 10 */
+#define STATOR_TIM             TIM2            /* free-running timebase, not capture */
+#define STATOR_TIMEBASE_HZ     979600UL        /* stock tick rate (~1.02 us/tick) */
 
-/* ---- Current shunt + bus voltage: TI INA2xx over I2C (CONFIRMED) ----------- *
+/* ---- Current shunt + bus voltage: TI INA226 over I2C1 (CONFIRMED) ---------- *
  * Single 500A/50mV shunt (manual wires 12/13, Purple/Grey), at battery OR
- * alternator per $CCN ShuntAtBat. Read by a TI INA226/INA228/INA238 current/
- * power monitor at I2C 7-bit addr 0x40. Firmware auto-detects the variant via
- * DIE_ID (reg 0xFF: 0x2260/0x2280/0x2380) + 'TI' manuf id (reg 0xFE=0x5449).
+ * alternator per $CCN ShuntAtBat. Read by a TI INA226 (ONLY — hardwired, no
+ * variant auto-detect: stock binary disasm 2026-07-23, §0.6 V3) at I2C1 7-bit
+ * addr 0x40. Stock reads regs 0x06 (Mask/Enable, conversion-ready gate), 0x02
+ * (bus V) and 0x01 (shunt V), 16-bit big-endian; CALIBRATION is computed at
+ * runtime from the configured shunt ratio, never a copied constant.
  * INA gives BOTH current (SHUNT_V reg 0x01) and local bus voltage (BUS_V 0x02),
  * which is why neither is on the internal ADC. See ina2xx.h. */
 #define INA_I2C_ADDR7          0x40U     /* 7-bit; addr<<1 = 0x80 on the bus */
@@ -93,11 +107,15 @@
 #define INA_REG_POWER          0x03U
 #define INA_REG_CURRENT        0x04U
 #define INA_REG_CALIBRATION    0x05U
+#define INA_REG_MASK_ENABLE    0x06U     /* conversion-ready gate (stock uses this) */
+/* ID regs exist on the INA226 silicon; the STOCK firmware never reads them
+ * (§0.6 V3 — the old "INA226/228/238 auto-detect" claim is refuted). Kept only
+ * for an optional sanity probe in our own driver. */
 #define INA_REG_MANUF_ID       0xFEU     /* 0x5449 = 'TI' */
-#define INA_REG_DIE_ID         0xFFU     /* 0x2260=INA226 0x2280=INA228 0x2380=INA238 */
+#define INA_REG_DIE_ID         0xFFU
 #define INA_DIEID_INA226       0x2260U
-#define INA_DIEID_INA228       0x2280U
-#define INA_DIEID_INA238       0x2380U
+#define INA_DIEID_INA228       0x2280U   /* not fitted on WS500 hardware */
+#define INA_DIEID_INA238       0x2380U   /* not fitted on WS500 hardware */
 #define SHUNT_FULL_SCALE_A     500.0f    /* 500A / 50mV default shunt */
 #define SHUNT_FULL_SCALE_MV    50.0f
 
@@ -125,19 +143,19 @@
 #define USB_DP_PIN             GPIO_PIN_12
 
 /* ---- Digital I/O (from HAL_GPIO_ReadPin/WritePin call-site + usage decode) -- *
- * DIP SWITCHES (battery-capacity code) — CONFIRMED: PA4, PA5, PA6 are read in
- *   sequence and packed into a binary value (bit0=PA4, bit1=PA5, bit2=PA6...);
- *   this is the BC_Index DIP bank (schema: "0 = use DIP switches"). PB0/PB1 are
- *   also read-once inputs — likely additional DIP bits (confirm).
+ * DIP SWITCHES (battery-capacity code) — CONFIRMED (§0.6 V1): PA4, PA5, PA6, PA7
+ *   + PB0, PB1, PB2 — seven inputs, ALL pull-up (PA7/PB2 were previously
+ *   undocumented). Read in sequence and packed into a binary value (bit0=PA4...);
+ *   this is the BC_Index DIP bank (schema: "0 = use DIP switches").
  * CONTROL INPUT: PB13 — polled, gates a control branch -> Enable/Ignition or
  *   Feature-In (manual wire 1 / 3). Exact label needs control-logic trace/bench.
  * STATUS OUTPUTS (driven 0/1 by state): PA0, PA9 (busiest), PA15, PB14 ->
  *   Lamp/Feature-Out (manual wire 2) + status LED(s). Which is which: bench.
  * Also static in MX_GPIO_Init: PC13-15, PB3-5, PC4, PC10.                        */
 #define DIP_PORT               GPIOA
-#define DIP_PINS               (GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_6)  /* batt-cap, PA4=LSB */
+#define DIP_PINS               (GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_7)  /* batt-cap, PA4=LSB; pull-up */
 #define DIP_EXTRA_PORT         GPIOB
-#define DIP_EXTRA_PINS         (GPIO_PIN_0 | GPIO_PIN_1)  /* likely more DIP bits */
+#define DIP_EXTRA_PINS         (GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2)  /* more DIP bits; pull-up */
 #define CTRL_IN_PORT           GPIOB
 #define CTRL_IN_PIN            GPIO_PIN_13  /* Enable/Ignition or Feature-In */
 #define STATUS_OUT_A_PINS      (GPIO_PIN_0 | GPIO_PIN_9 | GPIO_PIN_15) /* GPIOA LEDs/lamp */

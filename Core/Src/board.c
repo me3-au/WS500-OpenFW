@@ -47,11 +47,11 @@ void board_init(void)
 {
     board_clock_config();
 
+    /* LQFP64 (STM32F072RB) — only ports A/B/C exist; stock clocks the same set
+     * (binary disasm 2026-07-23, PROJECT_PLAN §0.6 V1). */
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
     __HAL_RCC_GPIOC_CLK_ENABLE();
-    __HAL_RCC_GPIOD_CLK_ENABLE();
-    __HAL_RCC_GPIOE_CLK_ENABLE();
 
     /* Field PWM: PA8 TIM1_CH1, PB15 TIM1_CH3N (AF2, push-pull). */
     gpio_af(FIELD_PWM_PORT,  FIELD_PWM_PIN,  FIELD_PWM_AF,  0);
@@ -69,6 +69,23 @@ void board_init(void)
     /* I2C1 PB6/7, I2C2 PB10/11 (AF1, open-drain, pull-up). */
     gpio_af(I2C1_PORT, I2C1_SCL_PIN | I2C1_SDA_PIN, I2C_AF, 1);
     gpio_af(I2C2_PORT, I2C2_SCL_PIN | I2C2_SDA_PIN, GPIO_AF1_I2C2, 1);
+
+    /* Stator input: PA10 as EXTI rising-edge (NOT a timer capture channel —
+     * §0.6 V1/V2). The RPM driver arms STATOR_EXTI_IRQn and diffs TIM2->CNT
+     * (free-running timebase) per edge. SYSCFG clock needed for EXTI routing. */
+    __HAL_RCC_SYSCFG_CLK_ENABLE();
+    GPIO_InitTypeDef s = {0};
+    s.Pin = STATOR_PIN;
+    s.Mode = GPIO_MODE_IT_RISING;
+    s.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(STATOR_PORT, &s);
+
+    /* DIP switches: PA4-PA7 + PB0-PB2, inputs with pull-up (§0.6 V1). */
+    GPIO_InitTypeDef d = {0};
+    d.Mode = GPIO_MODE_INPUT;
+    d.Pull = GPIO_PULLUP;
+    d.Pin = DIP_PINS;       HAL_GPIO_Init(DIP_PORT, &d);
+    d.Pin = DIP_EXTRA_PINS; HAL_GPIO_Init(DIP_EXTRA_PORT, &d);
 
     /* USB PA11/PA12 handled by the USB HAL/PCD init (fixed pins). */
 }

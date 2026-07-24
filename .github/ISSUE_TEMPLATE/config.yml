@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security / unsafe-charging bug
+    url: https://github.com/me3-au/WS500-OpenFW/security/advisories/new
+    about: Over-voltage, over-duty, or fail-safe bypass bugs go through private vulnerability reporting, not public issues. See SECURITY.md.

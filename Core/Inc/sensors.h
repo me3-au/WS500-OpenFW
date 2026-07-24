@@ -14,11 +14,12 @@
 /* Physical readings produced by the analog front-end (driver-owned type). */
 typedef struct {
     float vbat_pack_v;   /* battery voltage via PC5 divider */
-    float bus_v;         /* bus voltage at the shunt (INA226/228/238) */
+    float bus_v;         /* bus voltage at the shunt (INA226) */
     float amps_batt;     /* charge current from the INA shunt monitor */
-    float alt_temp_c;    /* alternator NTC (PA1) */
-    float driver_temp_c; /* internal driver-stage NTC (PA2) */
-    float batt_temp_c;   /* battery NTC (PA3) */
+    float alt_temp_c;    /* alternator/probe NTC (PA1 or PA2, beta 3950) */
+    float driver_temp_c; /* FET/driver-stage NTC (PA3, beta 3380 — §0.6 V8) */
+    float batt_temp_c;   /* battery temp — arrives via CAN/BMS, not local ADC;
+                            NAN until the CAN plumbing lands (§0.6 V8) */
 } sensor_readings_t;
 
 void sensors_init(void);              /* ADC + DMA circular scan + INA init */
