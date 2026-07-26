@@ -353,7 +353,8 @@ static void test_hello(void)
     CHECK(has(r, "\"fw\":\"0.1.0-dev\""));
     CHECK(has(r, "\"proto\":1"));
     CHECK(has(r, "\"schema\":1"));
-    /* Only what THIS deliverable ships. Telemetry adds its own flag later. */
+    /* A host WITHOUT the telem hook (this fixture) advertises only "cfg" —
+     * the flag follows the hook, never the build (see test_telem_surface). */
     CHECK(has(r, "\"caps\":[\"cfg\"]"));
     CHECK(!has(r, "\"telem\""));
     CHECK(!has(r, "\"git\""));          /* empty hash omits the field entirely */
@@ -370,6 +371,51 @@ static void test_hello(void)
 
     proto_reset("deadbee");
     CHECK(has(send("{\"t\":\"hello\",\"proto\":1}"), "\"git\":\"deadbee\""));
+}
+
+/* ---- 3b. telemetry surface: caps flag + telem-get dispatch (GH#35, #20) ---- */
+
+static int g_telem_calls;
+
+/* Stands in for telem_stream_send_now(): emits one line through the same
+ * transport the replies use, which is all config_msg requires of the hook. */
+static void fake_telem(void *ctx)
+{
+    (void)ctx;
+    g_telem_calls++;
+    static const char LINE[] = "{\"t\":\"telem\",\"fake\":1}\n";
+    cap_sink(NULL, LINE, (int)sizeof LINE - 1);
+}
+
+static void test_telem_surface(void)
+{
+    /* Without the hook, telem-get is an unknown message — the capability list
+     * and the dispatch table must tell the same story. */
+    proto_reset("");
+    CHECK(has(send("{\"t\":\"telem-get\"}"), "\"code\":\"CFG_ERR_MSG\""));
+
+    /* With the hook bound (fields appended after the positional seven, so the
+     * legacy initializer above stays valid): the flag appears and telem-get
+     * calls the hook exactly once, emitting inline like every other reply. */
+    cfg_msg_host_t host = {
+        h_get, h_save, NULL, cap_sink, NULL, "0.1.0-dev", ""
+    };
+    host.telem     = fake_telem;
+    host.telem_ctx = NULL;
+    cfg_msg_init(&g_msg, &host);
+    g_telem_calls = 0;
+
+    const char *r = send("{\"t\":\"hello\",\"proto\":1}");
+    CHECK(has(r, "\"caps\":[\"cfg\",\"telem\"]"));
+
+    const char *tr = send("{\"t\":\"telem-get\"}");
+    CHECK(g_telem_calls == 1);
+    CHECK(has(tr, "\"t\":\"telem\""));
+    CHECK(!has(tr, "\"t\":\"err\""));
+    CHECK(tr[strlen(tr) - 1] == '\n');
+
+    /* The config surface is untouched by the addition. */
+    CHECK(has(send("{\"t\":\"cfg-get\"}"), "\"t\":\"cfg\""));
 }
 
 /* ---- 4. cfg-get / cfg-set round trip --------------------------------------- */
@@ -708,6 +754,7 @@ void test_protocol(void)
     test_parser_matrix();
     test_number_format();
     test_hello();
+    test_telem_surface();
     test_round_trip();
     test_unknown_keys();
     test_validator_surface();

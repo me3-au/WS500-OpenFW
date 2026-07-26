@@ -22,6 +22,7 @@
 #include "config_validate.h"
 #include "config_msg.h"
 #include "cfg_stream.h"
+#include "telem_stream.h"
 #include "version.h"
 #include <math.h>
 
@@ -207,6 +208,14 @@ static void config_host_tx(void *ctx, const char *data, int len)
     cfg_proto_tx((const uint8_t *)data, len);
 }
 
+/* {"t":"telem-get"} → one snapshot on demand (GH#35, #20). Binding this hook
+ * is also what makes the hello reply advertise "telem" (config_msg.h). */
+static void config_host_telem(void *ctx)
+{
+    (void)ctx;
+    telem_stream_send_now();
+}
+
 void config_init(void)
 {
     config_defaults();
@@ -236,6 +245,8 @@ void config_init(void)
         .tx_ctx  = NULL,
         .fw      = FW_VERSION_STRING,
         .git     = FW_GIT_HASH,        /* empty unless the build supplied one */
+        .telem   = config_host_telem,  /* advertises the "telem" cap (GH#35) */
+        .telem_ctx = NULL,
     };
     cfg_msg_init(&s_msg, &host);
 }

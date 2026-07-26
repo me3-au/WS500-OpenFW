@@ -31,6 +31,11 @@ set(APP_SRC
     Core/Src/config_protocol.c
     Core/Src/config_store_glue.c
     Core/Src/cfg_stream.c
+    # GH#35 (#20): CDC-ACM port + 1 Hz telemetry pump. Self-written class on
+    # the vendored BSD-3 HAL PCD driver — ST's USB Device middleware is
+    # SLA0044 (ST-silicon-only) and therefore not vendorable here (CLAUDE.md).
+    Core/Src/usb_cdc.c
+    Core/Src/telem_stream.c
     Core/Src/can_n2k.c
     control/Src/control.c
     control/Src/arbitration.c
@@ -39,6 +44,7 @@ set(APP_SRC
     control/Src/faults.c
     control/Src/thermal.c
     control/Src/telemetry.c
+    control/Src/telemetry_json.c
     control/Src/config_codec.c
     control/Src/config_validate.c
     control/Src/config_store.c

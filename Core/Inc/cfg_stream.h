@@ -8,11 +8,10 @@
  * and control/ stays HAL-free because the ONLY file that will ever include a
  * USB header is the one implementing these.
  *
- * TODO(GH#35): the USB device stack does not exist in this tree yet. The stub
- * in cfg_stream.c satisfies the link and reports "no bytes"; wiring it to the
- * STM32 USB CDC class (PA11/PA12, the same interface the stock firmware
- * enumerates on) is that issue's job and MUST NOT change anything above this
- * header — if it does, the split is wrong.
+ * Bound since GH#35 to the USB CDC-ACM port (usb_cdc.h — PA11/PA12, the same
+ * interface the stock firmware enumerates on). The binding changed nothing
+ * above this header, which was the whole test of the split; usb_cdc.c owns the
+ * rings, flow control and never-block rules, cfg_stream.c just forwards.
  *
  * SPDX-License-Identifier: MIT
  */

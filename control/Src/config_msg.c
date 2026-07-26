@@ -93,6 +93,9 @@ static void do_hello(cfg_msg_t *m)
     cfg_json_w_key(&w, "caps");
     cfg_json_w_arr(&w);
     cfg_json_w_str(&w, CFG_CAP_CFG);
+    /* Capability flags follow the hooks, not the build date: a host that
+     * cannot serve telem-get must not advertise it (config_msg.h). */
+    if (m->host.telem != NULL) cfg_json_w_str(&w, CFG_CAP_TELEM);
     cfg_json_w_end(&w);
     reply_close(m, &w);
 }
@@ -263,6 +266,11 @@ void cfg_msg_line(cfg_msg_t *m, const char *line, int len)
     if (strcmp(t, "hello") == 0)        do_hello(m);
     else if (strcmp(t, "cfg-get") == 0) do_cfg_get(m);
     else if (strcmp(t, "cfg-set") == 0) do_cfg_set(m, line, len);
+    else if (strcmp(t, "telem-get") == 0 && m->host.telem != NULL)
+        /* The hook emits the whole line itself (config_msg.h) — without it the
+         * fall-through below answers exactly as for a type that never existed,
+         * which for this build is the truth (the caps list said so too). */
+        m->host.telem(m->host.telem_ctx);
     else reply_err(m, "CFG_ERR_MSG", "unknown message type", NULL, 0, -1);
 }
 

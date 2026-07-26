@@ -25,11 +25,13 @@
  * Request                          Reply
  * -------------------------------  ------------------------------------------
  * {"t":"hello","proto":N}          {"t":"hello","fw":..,"git":..,"proto":1,
- *                                   "schema":1,"caps":["cfg"]}
+ *                                   "schema":1,"caps":["cfg",...]}
  * {"t":"cfg-get"}                  {"t":"cfg","cfg":{ ...PROFILE_SPEC §7... }}
  * {"t":"cfg-set","cfg":{...}}      {"t":"ok","generation":N,"unknown_keys":K}
  *                              or  {"t":"err","code":..,"detail":..,
  *                                   "profile":P,"unknown_keys":K}
+ * {"t":"telem-get"}                {"t":"telem",...} (telemetry_json.h; only
+ *                                   when the host binds the telem hook below)
  * (anything else)                  {"t":"err","code":"CFG_ERR_MSG",...}
  *
  * `cfg-get`'s reply nests the document under "cfg" so that the reply body can
@@ -69,10 +71,14 @@
  * capability strings, not a bump. */
 #define CFG_PROTO_VERSION   1
 
-/* Capability flags this build announces. ONE entry today: the config surface
- * shipped with GH#16. Telemetry, the DFU handoff and the $AST-style status line
- * each add their own string when they land — never a version comparison. */
+/* Capability flags this build announces (VERSIONING §2: features are flags,
+ * never version comparisons). "cfg" is unconditional — the config surface IS
+ * this protocol. "telem" is announced only when the host binds the telem hook
+ * below, so the flag can never promise a surface the build cannot serve. The
+ * DFU handoff and the $AST-style status line add their own strings when they
+ * land. */
 #define CFG_CAP_CFG         "cfg"
+#define CFG_CAP_TELEM       "telem"
 
 /*
  * Longest accepted request line, in bytes, and the reason it is not the round
@@ -106,6 +112,17 @@ typedef struct {
     void            *tx_ctx;   /* passed back to tx */
     const char      *fw;       /* FW_VERSION_STRING; NULL omits the field */
     const char      *git;      /* short git hash; NULL or "" omits the field */
+
+    /* OPTIONAL telemetry surface (GH#35, deliverable #20), appended last so
+     * hosts built before it (positional initializers included) read as "not
+     * bound". When non-NULL: hello advertises CFG_CAP_TELEM and
+     * {"t":"telem-get"} calls this hook, which must emit exactly ONE complete
+     * {"t":"telem",...} line (telemetry_json.h) through the SAME transport the
+     * replies use. When NULL the flag is absent and telem-get is answered as
+     * an unknown message — for that build the surface genuinely does not
+     * exist, and the flag already said so. */
+    void (*telem)(void *telem_ctx);
+    void            *telem_ctx;
 } cfg_msg_host_t;
 
 /* Protocol state: one line under assembly plus the scratch a config write

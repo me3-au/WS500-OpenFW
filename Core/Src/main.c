@@ -28,6 +28,8 @@
 #include "thermal.h"
 #include "telemetry.h"
 #include "config_protocol.h"
+#include "usb_cdc.h"
+#include "telem_stream.h"
 #include "can_n2k.h"
 #include "crash_record.h"
 #include "watchdog.h"
@@ -101,6 +103,9 @@ int main(void)
     dio_init();              /* DIP boot-read + PB13 + status outputs */
     config_init();
     can_n2k_init();
+    usb_cdc_init();         /* CDC-ACM config/telemetry port; non-blocking by
+                             * contract (usb_cdc.h) — a dead USB block leaves
+                             * the port off and everything else running */
 
     ctrl_t         ctrl;    ctrl_init(&ctrl);
     ctrl_globals_t g;
@@ -125,6 +130,7 @@ int main(void)
     for (;;) {
         can_n2k_poll();
         config_poll();
+        telem_stream_poll();   /* 1 Hz USB telemetry line, gated on DTR (#20) */
         /* Comms checkpoint: pumped every iteration, not just every 10 ms. */
         watchdog_checkpoint(WDG_CP_COMMS);
 
@@ -212,7 +218,8 @@ int main(void)
 
             ctrl_telemetry_t tlm;
             ctrl_build_telemetry(&tlm, &m, &cmd, &g, &prof);
-            can_n2k_publish(&tlm);   /* NMEA2000 out → Cerbo */
+            can_n2k_publish(&tlm);      /* NMEA2000 out → Cerbo */
+            telem_stream_update(&tlm);  /* latch for the USB JSON stream (#20) */
 
             /* §7 R2: keep the snapshot a crash record will carry current. */
             const crash_state_t snap = {
