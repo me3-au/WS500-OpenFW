@@ -17,7 +17,7 @@
                                 CTRL_FAULT_IMPLAUSIBLE_SHUNT)
 #define CTRL_FAULT_BLOCK_MASK  (CTRL_FAULT_BATT_LOWTEMP | CTRL_FAULT_BATT_HIGHTEMP)
 #define CTRL_FAULT_WARN_MASK   (CTRL_FAULT_FIELD_OPEN | CTRL_FAULT_SELF_OVERTEMP | \
-                                CTRL_FAULT_THERMAL_DIVERGE)
+                                CTRL_FAULT_THERMAL_DIVERGE | CTRL_FAULT_VSUP_IMPLAUSIBLE)
 
 typedef enum {
     CTRL_DISP_CONTINUE = 0, /* no field-affecting fault */

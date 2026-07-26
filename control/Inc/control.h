@@ -57,7 +57,8 @@ typedef enum {
     CTRL_BIND_BELT,           /* belt torque ceiling (§2.2, optional) */
     CTRL_BIND_ENGINE,         /* engine white-space budget (§3.5, optional) */
     CTRL_BIND_USER_CAP,       /* manual cap / quiet mode */
-    CTRL_BIND_ROTOR_CLAMP     /* field-effort clamped at duty_max (§5.1) */
+    CTRL_BIND_ROTOR_CLAMP,    /* field-effort clamped at duty_max (§5.1) */
+    CTRL_BIND_RUN_DETECT      /* stationary rotor — field held to the §5.2 detect budget */
 } ctrl_bind_src_t;
 
 /* ---- Signal-quality / mode state ------------------------------------------ */
@@ -94,7 +95,8 @@ typedef enum {
     CTRL_FAULT_LOST_BMS        = 1u << 12,  /* recoverable → LIMP */
     CTRL_FAULT_IMPLAUSIBLE_SHUNT = 1u << 13,/* recoverable → LIMP */
     CTRL_FAULT_THERMAL_DIVERGE = 1u << 14,  /* governor model divergence (§4.1) */
-    CTRL_FAULT_WATCHDOG        = 1u << 15    /* → field open */
+    CTRL_FAULT_WATCHDOG        = 1u << 15,  /* → field open */
+    CTRL_FAULT_VSUP_IMPLAUSIBLE = 1u << 16  /* WARN: clamp supply reading distrusted (§5.1) */
 } ctrl_fault_bits_t;
 
 /* ---- Live measurements the engine consumes -------------------------------- *
@@ -207,6 +209,15 @@ typedef struct {
     uint32_t       faults;         /* active ctrl_fault_bits_t */
 } ctrl_command_t;
 
+/* ---- Supply-voltage plausibility guard (§5.1) ------------------------------ *
+ * State for the clamp-voltage vetting in field.c: an in-range-but-false-LOW
+ * supply reading would loosen duty_max onto the true (higher) bus voltage, so
+ * the guard tracks the last-trusted level and refuses implausible drops. */
+typedef struct {
+    float    v_track;      /* last-trusted clamp voltage; NAN = unseeded */
+    uint32_t distrust_ms;  /* how long the reading has disagreed downward */
+} ctrl_vsup_guard_t;
+
 /* ---- Persistent engine context -------------------------------------------- */
 typedef struct {
     ctrl_state_t          state;
@@ -227,6 +238,9 @@ typedef struct {
     uint32_t              tail_hold_ms;
     uint32_t              revert_hold_ms;
     uint32_t              vclamp_hold_ms;
+
+    ctrl_vsup_guard_t     vsup;          /* §5.1 clamp-voltage plausibility */
+    uint32_t              run_probe_ms;  /* §5.2 detect-budget pulse phase */
 } ctrl_t;
 
 /* ---- API ------------------------------------------------------------------ */

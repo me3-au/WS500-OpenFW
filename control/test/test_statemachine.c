@@ -4,6 +4,7 @@
  */
 #include "test.h"
 #include "control.h"
+#include "field.h"     /* §5.2 detect-budget constants (cases 17–18) */
 
 static ctrl_globals_t G(void)
 {
@@ -59,9 +60,9 @@ static ctrl_measured_t M(float vcell)
     m.alt_hotspot_c = 60.0f;
     m.batt_temp_c = 25.0f;
     m.driver_temp_c = 50.0f;
-    m.rpm = 0.0f;
-    m.rpm_state = CTRL_RPM_LOST;
-    m.run_state = CTRL_RUN_NOT_RUNNING;
+    m.rpm = 1800.0f;
+    m.rpm_state = CTRL_RPM_VALID;
+    m.run_state = CTRL_RUN_RUNNING;
     m.soc_pct = -1.0f;
     m.soc_trusted = false;
     m.ignition = true;
@@ -248,5 +249,120 @@ void test_statemachine(void)
         CHECK(cmd.faults & CTRL_FAULT_LOST_VBAT_SENSE);
         CHECK(isfinite(cmd.field_duty));
         CHECK_FEQ(cmd.field_duty, 0.0f, 1e-6);
+    }
+
+    /* 15) T3 Ah revert (GH#37): in FLOAT with battery-truth current, net Ah
+     *     discharged since charged reaching ah_revert reverts to BULK — with
+     *     voltage held ABOVE the voltage-revert threshold the whole time. */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_measured_t m = M(3.60f); m.watts_batt = 10.0f;
+        ctrl_command_t cmd = ctrl_tick(&e, &m, &c, &p, &g, 100);
+        for (int i = 0; i < 30; i++) cmd = ctrl_tick(&e, &m, &c, &p, &g, 100); /* → FLOAT (tail) */
+        CHECK(cmd.state == CTRL_FLOAT);
+        CHECK_FEQ(e.ah_since_charged, 0.0f, 1e-6);        /* reset at charged */
+
+        ctrl_measured_t md = M(3.40f);                    /* above v_revert 3.28 */
+        md.amps_batt = -30.0f; md.watts_batt = -30.0f * 13.6f;
+        /* 30 Ah at 30 A = 1 h; run 1 h + margin in 1 s ticks. */
+        for (int i = 0; i < 3700 && cmd.state == CTRL_FLOAT; i++)
+            cmd = ctrl_tick(&e, &md, &c, &p, &g, 1000);
+        CHECK(cmd.state == CTRL_BULK);
+        CHECK(e.ah_since_charged >= p.ah_revert - 0.5f);  /* it was the Ah path */
+    }
+
+    /* 16) T3 Ah revert is DISARMED without battery truth (tier 3, §4.2) and
+     *     must not fire; charging current pays the deficit back down. */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_measured_t m = M(3.60f); m.watts_batt = 10.0f;
+        ctrl_command_t cmd = ctrl_tick(&e, &m, &c, &p, &g, 100);
+        for (int i = 0; i < 30; i++) cmd = ctrl_tick(&e, &m, &c, &p, &g, 100); /* → FLOAT */
+        CHECK(cmd.state == CTRL_FLOAT);
+
+        ctrl_measured_t md = M(3.40f);
+        md.isrc = CTRL_ISRC_ALT_SHUNT;                    /* tier 3: no battery truth */
+        md.amps_batt = -30.0f; md.watts_batt = -408.0f;
+        for (int i = 0; i < 3700; i++) cmd = ctrl_tick(&e, &md, &c, &p, &g, 1000);
+        CHECK(cmd.state == CTRL_FLOAT);                   /* never reverted */
+        CHECK_FEQ(e.ah_since_charged, 0.0f, 1e-6);        /* never integrated */
+
+        /* Battery truth again: discharge 20 Ah, recharge 20 Ah → deficit repaid,
+         * no revert (net Ah, not gross). */
+        ctrl_measured_t mt = M(3.40f);
+        mt.amps_batt = -20.0f; mt.watts_batt = -272.0f;
+        for (int i = 0; i < 3600; i++) cmd = ctrl_tick(&e, &mt, &c, &p, &g, 1000);
+        CHECK(e.ah_since_charged > 19.0f && e.ah_since_charged < 21.0f);
+        mt.amps_batt = 20.0f; mt.watts_batt = 272.0f;
+        for (int i = 0; i < 3600; i++) cmd = ctrl_tick(&e, &mt, &c, &p, &g, 1000);
+        CHECK_FEQ(e.ah_since_charged, 0.0f, 0.5f);
+        CHECK(cmd.state == CTRL_FLOAT);
+    }
+
+    /* 17) §5.2 stationary-rotor gate (GH#37): no rotation detected → effort is
+     *     held to the pulse-cycled detect budget, never the clamp. */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_measured_t m = M(3.30f);                     /* wants max field */
+        m.rpm = 0.0f; m.rpm_state = CTRL_RPM_LOST;
+        m.run_state = CTRL_RUN_NOT_RUNNING;
+        float e_max = 0.0f; int zero_ticks = 0, on_ticks = 0;
+        ctrl_command_t cmd = {0};
+        for (int i = 0; i < 100; i++) {                   /* 1 s at 10 ms = 2 probe cycles */
+            cmd = ctrl_tick(&e, &m, &c, &p, &g, 10);
+            if (cmd.field_effort > e_max) e_max = cmd.field_effort;
+            if (cmd.field_effort == 0.0f) zero_ticks++; else on_ticks++;
+        }
+        CHECK(cmd.state == CTRL_BULK);                    /* engine logic unaffected */
+        CHECK(!cmd.field_open);
+        CHECK(e_max <= CTRL_RUN_DETECT_EFFORT + 1e-6f);   /* budget respected */
+        CHECK(on_ticks > 0);                              /* probe pulses do fire */
+        CHECK(zero_ticks > on_ticks);                     /* bounded on-time ratio */
+        CHECK(cmd.binding == CTRL_BIND_RUN_DETECT ||
+              cmd.field_effort <= CTRL_RUN_DETECT_EFFORT);
+
+        /* Rotation appears (VALID RPM) → gate releases, effort climbs past the
+         * budget under the normal loop. */
+        m.rpm = 1800.0f; m.rpm_state = CTRL_RPM_VALID;
+        for (int i = 0; i < 200; i++) cmd = ctrl_tick(&e, &m, &c, &p, &g, 10);
+        CHECK(cmd.field_effort > CTRL_RUN_DETECT_EFFORT);
+
+        /* STALE keeps the last-good claim (§3.1) — still treated as running. */
+        m.rpm_state = CTRL_RPM_STALE;
+        cmd = ctrl_tick(&e, &m, &c, &p, &g, 10);
+        CHECK(cmd.field_effort > CTRL_RUN_DETECT_EFFORT);
+
+        /* LOST + app says not running → back to the budget within one tick. */
+        m.rpm = 0.0f; m.rpm_state = CTRL_RPM_LOST;
+        cmd = ctrl_tick(&e, &m, &c, &p, &g, 10);
+        CHECK(cmd.field_effort <= CTRL_RUN_DETECT_EFFORT + 1e-6f);
+    }
+
+    /* 18) §5.1 clamp-supply plausibility (GH#37): an in-range-but-false-LOW
+     *     supply reading must NOT loosen the duty clamp. 16S so the clamp is
+     *     genuinely < 1 (48 V-class bus). */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_globals_t g16 = G(); g16.cells_series = 16;
+        ctrl_profile_t p16 = P1();
+        ctrl_measured_t m = M(3.40f);
+        m.vbat_pack_v = m.vcomp_pack_v = 3.40f * 16.0f;   /* 54.4 V bus */
+        m.v_supply_v = 54.4f;
+        ctrl_command_t cmd = {0};
+        for (int i = 0; i < 3000; i++) cmd = ctrl_tick(&e, &m, &c, &p16, &g16, 10);
+        CHECK_FEQ(cmd.field_duty, cmd.field_effort * (12.0f / 54.4f), 1e-4);
+
+        /* Sensor lies low (in-range 49 V; true bus unchanged): duty_max must
+         * hold at 12/54.4, not loosen to 12/49. WARN raised, not LIMP/OPEN. */
+        ctrl_measured_t lie = m;
+        lie.vbat_pack_v = lie.vcomp_pack_v = 49.0f; lie.v_supply_v = 49.0f;
+        for (int i = 0; i < 3000; i++) cmd = ctrl_tick(&e, &lie, &c, &p16, &g16, 10);
+        CHECK(cmd.faults & CTRL_FAULT_VSUP_IMPLAUSIBLE);
+        CHECK(cmd.field_duty <= cmd.field_effort * (12.0f / 54.4f) + 1e-4f);
+        CHECK(!cmd.field_open);
+
+        /* Reading recovers → WARN clears, clamp follows the honest voltage. */
+        for (int i = 0; i < 100; i++) cmd = ctrl_tick(&e, &m, &c, &p16, &g16, 10);
+        CHECK(!(cmd.faults & CTRL_FAULT_VSUP_IMPLAUSIBLE));
     }
 }

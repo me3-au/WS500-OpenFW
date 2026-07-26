@@ -23,6 +23,9 @@ void scn_rpm_transients(void);
 void scn_temperature(void);
 void scn_sensor_faults(void);
 void scn_reference_trace(void);
+void scn_stalled_rotor(void);
+void scn_lying_vbat(void);
+void scn_ah_revert(void);
 void scn_long_soak(void);
 
 int main(void)
@@ -38,6 +41,9 @@ int main(void)
     scn_temperature();
     scn_sensor_faults();
     scn_reference_trace();
+    scn_stalled_rotor();
+    scn_lying_vbat();
+    scn_ah_revert();
     scn_long_soak();
 
     printf("\n%d checks, %d failures\n", g_checks, g_fails);

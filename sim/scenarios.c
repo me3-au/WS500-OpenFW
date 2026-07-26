@@ -13,6 +13,7 @@
  */
 #include "../control/test/test.h"
 #include "sil.h"
+#include "field.h"
 #include "faults.h"
 #include <stdio.h>
 
@@ -250,16 +251,17 @@ void scn_rpm_transients(void)
     CHECK(s.plant.i_alt_a > 0.8f * i_cruise);
 
     /* Stall to zero: RPM sensor goes LOST (NaN), engine stopped. The core must
-     * stay sane — no OV/overspeed faults, clamp intact.
-     * (NOTE for the report: the pure core has no §5.2 stationary-rotor gate —
-     * field remains energized at the clamp with the engine stopped. Run-detect
-     * gating is app/driver-side work; recorded as a finding, not asserted.) */
+     * stay sane — no OV/overspeed faults, clamp intact — and the §5.2 run-detect
+     * gate must pull the field down to the detect budget (scn_stalled_rotor
+     * covers the gate in depth; here we just confirm it engages). */
     s.engine_rpm = 0.0f;
     s.inj.dropout[PS_RPM] = true;
+    sil_reset_maxima(&s);
     for (uint32_t i = 0; i < 120u * 100u; i++) { s.plant.soc = 0.50f; sil_step(&s); }
     CHECK(ctrl_fault_disposition(s.cmd.faults) == CTRL_DISP_CONTINUE);
     CHECK(s.cmd.state == CTRL_BULK);
     CHECK(s.plant.i_alt_a < 1.0f);                  /* no output at 0 RPM */
+    CHECK(s.max_duty_seen <= CTRL_RUN_DETECT_EFFORT * 0.25f + 0.01f); /* gated */
 
     /* Restart: recovers again. */
     s.engine_rpm = 2330.0f;
@@ -497,6 +499,210 @@ void scn_reference_trace(void)
     printf("   settled: duty %.3f (12/V=%.3f), %.0f A, bus %.2f V\n",
            (double)s.cmd.field_duty, (double)(12.0f / s.plant.vbus_v),
            (double)s.plant.i_alt_a, (double)s.plant.vbus_v);
+}
+
+/* --------------------------------------------------------------------------
+ * 9) STALLED ROTOR (GH#37 / CONTROL_SPEC §5.2): engine dies mid-charge with
+ *    ignition still on and the bus live. Without the run-detect gate the core
+ *    held the field at the clamp — ~3 A of pure I²R into a fanless rotor,
+ *    indefinitely. Now the field must fall to the pulse-cycled detect budget
+ *    within spec time and stay there for hours without heating the rotor.
+ * -------------------------------------------------------------------------- */
+void scn_stalled_rotor(void)
+{
+    banner("stalled_rotor (§5.2 run-detect gate, key-on-engine-off)");
+    sil_t s; sil_init(&s, 0x57A11ED1u, 0.50f);
+    s.engine_rpm = 2330.0f;
+
+    /* Charge normally for 2 min — field settles at the rotor clamp. */
+    for (uint32_t i = 0; i < 120u * 100u; i++) { s.plant.soc = 0.50f; sil_step(&s); }
+    CHECK(s.cmd.field_duty > 0.15f);                /* genuinely energized before */
+
+    /* Engine stalls (stator stops; sil reports RPM LOST + NOT_RUNNING). The
+     * field must be at/below the detect budget within 1 s of the stall. */
+    s.engine_rpm = 0.0f;
+    const float budget_duty = CTRL_RUN_DETECT_EFFORT * 0.25f;   /* ≈5 % of ≈25 % clamp */
+    sil_run_ticks(&s, 100);                         /* 1 s */
+    CHECK(s.cmd.field_duty <= budget_duty + 1e-4f);
+
+    /* Key-on-engine-off soak: 2 h stalled. Budget respected every tick, the
+     * pulse duty cycle is bounded, and the rotor never warms — the exact
+     * "can never cook the rotor" property §5.2 demands. */
+    sil_reset_maxima(&s);
+    uint32_t on_ticks = 0, n = 2u * 3600u * 100u;
+    for (uint32_t i = 0; i < n; i++) {
+        sil_step(&s);
+        if (s.cmd.field_duty > 0.0f) on_ticks++;
+    }
+    CHECK(s.inv_violations == 0);
+    CHECK(s.max_duty_seen <= budget_duty + 1e-4f);  /* never above the budget */
+    CHECK(s.max_ifield_seen <= 0.25f);              /* ~0.15 A pulses, not 3 A */
+    CHECK(s.max_rotor_w_seen <= 1.0f);              /* vs ~29 W ungated */
+    CHECK((float)on_ticks / (float)n <= 0.15f);     /* bounded on-time ratio */
+    CHECK(s.plant.rotor_temp_c <= s.plant.cfg.ambient_c + 2.0f);  /* stone cold */
+    CHECK(ctrl_fault_disposition(s.cmd.faults) == CTRL_DISP_CONTINUE);
+    printf("   stalled 2 h: max duty %.4f (budget %.4f), max I_f %.3f A, "
+           "rotor %.1f C, on-ratio %.3f\n",
+           (double)s.max_duty_seen, (double)budget_duty,
+           (double)s.max_ifield_seen, (double)s.plant.rotor_temp_c,
+           (double)((float)on_ticks / (float)n));
+
+    /* Engine restarts → gate releases, soft ramp resumes, charging recovers. */
+    s.engine_rpm = 2330.0f;
+    for (uint32_t i = 0; i < 120u * 100u; i++) { s.plant.soc = 0.50f; sil_step(&s); }
+    CHECK(s.plant.i_alt_a > 30.0f);
+    CHECK(s.inv_violations == 0);
+}
+
+/* --------------------------------------------------------------------------
+ * 10) LYING VBAT (GH#37 / CONTROL_SPEC §5.1): the dynamic clamp is computed
+ *     from MEASURED supply voltage — an in-range-but-false-LOW reading used to
+ *     loosen duty_max onto the true (higher) bus. The plausibility guard must
+ *     hold the clamp at the last-trusted level: NEVER looser than the clamp
+ *     the TRUE voltage would give. False-HIGH must tighten (safe direction).
+ * -------------------------------------------------------------------------- */
+void scn_lying_vbat(void)
+{
+    banner("lying_vbat (§5.1 clamp-supply plausibility)");
+    sil_t s; sil_init(&s, 0x11E5BA77u, 0.52f);
+    s.engine_rpm = 2330.0f;
+
+    /* Settle clamp-limited at the true bus (~54.5 V → duty ≈ 12/54.5). */
+    for (uint32_t i = 0; i < 180u * 100u; i++) { s.plant.soc = 0.52f; sil_step(&s); }
+    CHECK(s.cmd.binding == CTRL_BIND_ROTOR_CLAMP);
+    CHECK_FEQ(s.cmd.field_duty, 12.0f / s.plant.vbus_v, 0.004f);
+
+    /* Phase A: false LOW — sensor claims 49.0 V (in plausible range for 16S),
+     * true bus stays ~54.5 V. 2 min lie (inside the distrust hold): the duty
+     * must NEVER exceed the true-voltage clamp, rotor current stays ≤ rated,
+     * and the distrust is telemetered as a WARN — not silent. */
+    s.inj.override_en[PS_VBAT] = true;
+    s.inj.override_v[PS_VBAT] = 49.0f;
+    sil_reset_maxima(&s);
+    float true_clamp_min = 1.0f;
+    for (uint32_t i = 0; i < 120u * 100u; i++) {
+        s.plant.soc = 0.52f;
+        sil_step(&s);
+        const float tc = 12.0f / s.plant.vbus_v;    /* clamp truth would give */
+        if (tc < true_clamp_min) true_clamp_min = tc;
+        if (s.cmd.field_duty > tc + 1e-4f) {        /* the #1 assertion */
+            CHECK(false);
+            break;
+        }
+    }
+    CHECK(s.max_duty_seen <= true_clamp_min + 1e-3f);   /* never loosened */
+    CHECK(s.max_ifield_seen <= 3.05f);                  /* rotor at/below rated */
+    CHECK(s.cmd.faults & CTRL_FAULT_VSUP_IMPLAUSIBLE);  /* WARN raised */
+    CHECK(ctrl_fault_disposition(s.cmd.faults) == CTRL_DISP_CONTINUE); /* still charging */
+    CHECK(s.plant.i_alt_a > 30.0f);                     /* output not killed either */
+    printf("   false-low: max duty %.4f vs true clamp %.4f, max I_f %.2f A\n",
+           (double)s.max_duty_seen, (double)true_clamp_min,
+           (double)s.max_ifield_seen);
+
+    /* Reading recovers → WARN clears, clamp follows the honest voltage again. */
+    s.inj.override_en[PS_VBAT] = false;
+    for (uint32_t i = 0; i < 30u * 100u; i++) { s.plant.soc = 0.52f; sil_step(&s); }
+    CHECK(!(s.cmd.faults & CTRL_FAULT_VSUP_IMPLAUSIBLE));
+    CHECK_FEQ(s.cmd.field_duty, 12.0f / s.plant.vbus_v, 0.004f);
+
+    /* Phase B: false HIGH (58 V claimed, true ~54.5 V) — followed immediately
+     * because a higher assumed supply can only TIGHTEN the clamp. */
+    s.inj.override_en[PS_VBAT] = true;
+    s.inj.override_v[PS_VBAT] = 58.0f;
+    sil_reset_maxima(&s);
+    for (uint32_t i = 0; i < 60u * 100u; i++) { s.plant.soc = 0.52f; sil_step(&s); }
+    CHECK(s.max_duty_seen <= 12.0f / 58.0f + 1e-3f);    /* tightened to 12/58 */
+    CHECK(s.inv_violations == 0);
+}
+
+/* --------------------------------------------------------------------------
+ * 11) T3 AH-REVERT (GH#37 / PROFILE_SPEC §2.2): with a zero-rest profile the
+ *     bank rests at STANDBY while house loads discharge it. LFP voltage is
+ *     flat there — the Ah integrator, not voltage, must bring CHARGE back at
+ *     the configured net-Ah deficit (battery-truth tiers only).
+ * -------------------------------------------------------------------------- */
+void scn_ah_revert(void)
+{
+    banner("ah_revert (T3 net-Ah integrator, zero-rest profile)");
+    sil_t s; sil_init(&s, 0xA43E7E41u, 0.85f);
+    s.engine_rpm = 2800.0f;
+
+    /* Small bank + short CV hold so the charge phase is quick; zero-rest
+     * profile; Ah revert armed at 15 Ah; voltage revert parked far below the
+     * LFP plateau so only the Ah path can fire. */
+    s.g.bank_capacity_ah  = 100.0f;
+    s.g.p_tail_w          = 0.04f * 100.0f * 16.0f * 3.45f;   /* ≈ 221 W */
+    s.g.cv_hold_exit_min  = 2;
+    s.plant.cfg.capacity_ah = 100.0f;
+    plant_init(&s.plant, &s.plant.cfg, 0.85f);
+    s.prof.rest_mode      = CTRL_REST_ZERO;
+    s.prof.ah_revert      = 15.0f;
+    s.prof.v_revert_vcell = 3.05f;          /* 48.8 V pack — unreachable here */
+
+    /* Charge to the charged exit → STANDBY-rest (zero field). */
+    uint32_t rest_tick = 0;
+    for (uint32_t i = 0; i < 2u * 3600u * 100u; i++) {
+        sil_step(&s);
+        if (s.cmd.state == CTRL_STANDBY && s.cmd.standby_reason == CTRL_SB_REST) {
+            rest_tick = i; break;
+        }
+    }
+    CHECK(rest_tick > 0);
+    CHECK_FEQ(s.ctrl.ah_since_charged, 0.0f, 0.01f);   /* reset at charged */
+    CHECK(s.cmd.field_open);                           /* true zero field */
+
+    /* House loads discharge the resting bank: ~2 kW ≈ 38 A. Expected revert
+     * after 15 Ah ≈ 23–24 min; voltage stays on the plateau the whole time. */
+    s.house_load_w = 2000.0f;
+    uint32_t revert_tick = 0;
+    float min_vcell = 10.0f;
+    for (uint32_t i = 0; i < 60u * 60u * 100u; i++) {  /* ≤ 1 h */
+        sil_step(&s);
+        const float vc = s.plant.vbus_v / 16.0f;
+        if (vc < min_vcell) min_vcell = vc;
+        if (s.cmd.state == CTRL_BULK) { revert_tick = i; break; }
+    }
+    CHECK(revert_tick > 0);                            /* it DID revert */
+    CHECK(min_vcell > s.prof.v_revert_vcell);          /* …and NOT via voltage */
+    /* Timing: 15 Ah at ~38 A → ~23.5 min; accept 18–32 min (sag/eff. margins). */
+    const float revert_min = (float)revert_tick / 6000.0f;
+    CHECK(revert_min > 18.0f && revert_min < 32.0f);
+    CHECK(s.ctrl.ah_since_charged >= 14.5f);           /* integrator did the work */
+    printf("   reverted after %.1f min (%.1f Ah), min %.3f V/cell\n",
+           (double)revert_min, (double)s.ctrl.ah_since_charged, (double)min_vcell);
+
+    /* Recharge completes → integrator resets for the next cycle. */
+    s.house_load_w = 0.0f;
+    for (uint32_t i = 0; i < 3600u * 100u; i++) {
+        sil_step(&s);
+        if (s.cmd.state == CTRL_STANDBY && s.cmd.standby_reason == CTRL_SB_REST) break;
+    }
+    CHECK(s.cmd.state == CTRL_STANDBY && s.cmd.standby_reason == CTRL_SB_REST);
+    CHECK_FEQ(s.ctrl.ah_since_charged, 0.0f, 0.01f);
+    CHECK(s.inv_violations == 0);
+
+    /* Control sub-run: tier 3 (alternator-side shunt) — Ah revert must stay
+     * DISARMED (PROFILE_SPEC §4.2); the same discharge does not revert. */
+    sil_t s2; sil_init(&s2, 0xA43E7E42u, 0.85f);
+    s2.engine_rpm = 2800.0f;
+    s2.isrc = CTRL_ISRC_ALT_SHUNT;
+    s2.g.bank_capacity_ah  = 100.0f;
+    s2.g.cv_hold_exit_min  = 2;
+    s2.plant.cfg.capacity_ah = 100.0f;
+    plant_init(&s2.plant, &s2.plant.cfg, 0.85f);
+    s2.prof.rest_mode      = CTRL_REST_ZERO;
+    s2.prof.ah_revert      = 15.0f;
+    s2.prof.v_revert_vcell = 3.05f;
+    for (uint32_t i = 0; i < 2u * 3600u * 100u; i++) {
+        sil_step(&s2);
+        if (s2.cmd.state == CTRL_STANDBY && s2.cmd.standby_reason == CTRL_SB_REST) break;
+    }
+    CHECK(s2.cmd.standby_reason == CTRL_SB_REST);
+    s2.house_load_w = 2000.0f;
+    for (uint32_t i = 0; i < 40u * 60u * 100u; i++) sil_step(&s2);   /* 40 min */
+    CHECK(s2.cmd.state == CTRL_STANDBY);               /* no battery truth → no Ah revert */
+    CHECK_FEQ(s2.ctrl.ah_since_charged, 0.0f, 0.01f);
+    CHECK(s2.inv_violations == 0);
 }
 
 /* --------------------------------------------------------------------------

@@ -464,15 +464,20 @@ a 48 V system (§5). Four virtual layers, cheapest first; all run in CI:
   safe), **rotor-clamp verification with this exact install's parameters (4 Ω / 12 V rotor
   on 48–57.6 V bus → duty ceiling ≈25 %/≈21 %, verified never exceeded under 20 min of
   transient abuse)**, reference-trace shape, and a 5 M-tick long-soak (zero invariant
-  violations). The main gauntlet — a regression suite, not a demo.
+  violations). The main gauntlet — a regression suite, not a demo. **Extended 2026-07-26
+  (GH#37 fixes): now 12 scenarios / 148 checks** — adds stalled-rotor (run-detect gate),
+  lying-VBat (clamp plausibility guard), and Ah-revert timing.
   - **Payoff: 4 control-core bugs caught + fixed with tests** — two NaN-propagation faults
     (lost VBat → NaN field duty; shunt dropout → effort integrator latched permanently),
     tick-rate-dependent + marginally-unstable inner-loop gains (chatter matching live
     observation; now dt-scaled, KP −5×), and a knife-edge CV-exit qualifier that stalled
-    T2 hold timers under sensor noise. Documented-not-fixed (app-side / spec, GH#37):
-    run-detect/stationary-rotor budget (§5.2) absent from the pure core; dynamic clamp
-    trusts measured supply V (in-range sensor lies loosen it — needs plausibility); T3
-    Ah-revert integrator unwired.
+    T2 hold timers under sensor noise. **GH#37 items FIXED in-core 2026-07-26** (were
+    documented-not-fixed): §5.2 run-detect gate (no rotation ⇒ field held to a pulse-cycled
+    ≤5 % detect budget), clamp-supply plausibility guard (false-low readings can never
+    loosen duty_max; worst-case = tightest clamp), and the T3 Ah-revert integrator (net
+    Ah, battery-truth tiers only). Residual (documented in `sim/README.md`): a consistent
+    from-boot false-low on the single physical voltage source is undetectable in-core;
+    detect-budget/guard constants are `[SPEC-SIGNOFF]` placeholders pending spec review.
 - **8.2 Renode — whole-firmware emulation (#19).** ✅ **HARNESS BUILT + CI-GREEN
   2026-07-26 (`renode/`, GH#25).** Stock Renode STM32F072 platform (thin overlay, no
   hand-written peripherals); the CI `emulation` job boots the real `ws500-openfw.elf`

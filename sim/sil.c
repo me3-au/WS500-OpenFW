@@ -115,7 +115,7 @@ static void sil_invariants(sil_t *s)
     inv(s, c->state == CTRL_STANDBY || c->state == CTRL_BULK || c->state == CTRL_FLOAT,
         "state valid");
     inv(s, c->standby_reason <= CTRL_SB_FAULT, "standby_reason valid");
-    inv(s, c->binding <= CTRL_BIND_ROTOR_CLAMP, "binding valid");
+    inv(s, c->binding <= CTRL_BIND_RUN_DETECT, "binding valid");
     inv(s, !c->field_open || c->field_duty == 0.0f, "field_open implies zero duty");
 
     /* Plant sanity. */

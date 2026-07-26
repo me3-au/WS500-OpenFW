@@ -90,6 +90,9 @@ runs ~21.9 % (`I_f` = exactly 3.0 A) and delivers ~66 A at 2330 RPM. The
 | `temperature` | Li charge-window gates (−5 °C block / 60 °C abort, both resume on recovery); predictive thermal governor holds the alternator near the 95 °C target in a 45 °C engine room; raw 125 °C hard limit → fault + power pulled to the derate floor |
 | `sensor_faults` | VBat dropout → LIMP + duty exactly 0 (not NaN) + recovery; shunt dropout (NaN watts) never reaches the PWM and un-latches; implausible +2000 A → Limp Home (FLOAT @ `v_limp`, field *not* open); injected overvoltage → CRITICAL **latches**, field stays open after the reading recovers; 3 % noise storm stays safe and charging |
 | `reference_trace` | Stock-trace shape at 2330 RPM mid-charge: railed at the rotor clamp (binding = `ROTOR_CLAMP`), `duty = 12/V_bus`, `I_f = 3.0 A`, CV target unreached — clamp-limited exactly like the stock unit; soft-start watts obey the `ramp_w_per_s` envelope |
+| `stalled_rotor` | **§5.2 run-detect gate (GH#37):** engine dies mid-charge, bus live, ignition on — field falls to the pulse-cycled detect budget (≤5 % of `duty_max`, ≤10 % on-time) within 1 s and holds it for a 2 h key-on-engine-off soak: `I_f` ≤ 0.25 A, rotor dissipation ≤ 1 W, rotor stays at ambient; charging soft-ramps back when the engine restarts |
+| `lying_vbat` | **§5.1 clamp-supply plausibility (GH#37):** in-range false-LOW VBat (49 V claimed, ~54.5 V true) — the duty clamp NEVER loosens beyond the true-voltage clamp (checked every tick), rotor current stays ≤ rated, distrust telemetered as a WARN and cleared on recovery; false-HIGH tightens immediately (safe direction) |
+| `ah_revert` | **T3 Ah integrator (GH#37):** zero-rest profile, bank resting on the flat LFP plateau while 2 kW of house loads discharge it — CHARGE returns via the net-Ah path (15 Ah ≈ 24 min at ~38 A) with voltage never near `v_revert`; integrator resets at the next charged exit; tier-3 (alt-side shunt) control run proves the path stays disarmed without battery truth |
 | `long_soak` | 5,000,000 ticks (~14 h) of engine/ignition/load cycling with noise: 21 BULK / 21 FLOAT / 21 STANDBY entries, no state-machine leaks, timers sane, outputs finite, rotor never overdriven |
 
 ## Control-core defects found by this harness (fixed, flagged `[SIL-found 2026-07]`)
@@ -115,18 +118,33 @@ runs ~21.9 % (`I_f` = exactly 3.0 A) and delivers ~66 A at 2330 RPM. The
 Each fix carries a matching unit test in `control/test/` (cases 13/14 in
 `test_statemachine.c`, NaN cases in `test_field.c`).
 
-## Known gaps observed (documented, not asserted)
+## Formerly-known gaps — now fixed in the core (GH#37, 2026-07)
 
-- **§5.2 run-detect / stationary-rotor budget is not in the pure core**: with
-  the engine stalled and ignition on, the core keeps the field energized at the
-  clamp (~3 A into a fanless rotor). Safe-ish by the clamp, but the CONTROL_SPEC
-  §5.2 detect-budget gating is app/driver-side work still to come.
-- **T3 Ah-revert is unimplemented** in the core (`ah_since_charged` is never
-  integrated); voltage/SOC reverts carry the transition.
-- **Sensor trust**: the dynamic clamp uses *measured* supply voltage; a
-  voltage sensor reading far below true (in-range but wrong) would loosen the
-  clamp proportionally. In-range plausibility checking of VBat against
-  expectations is app-side (§7) — the SIL invariant covers ≤3 % noise.
+The three gaps this harness originally documented-but-did-not-assert are now
+implemented in the pure core and asserted by the scenarios above:
+
+1. **§5.2 run-detect / stationary-rotor budget** — `ctrl_run_detected()`
+   (`field.c`) + the detect-budget gate in `ctrl_tick()`: no rotation evidence
+   (VALID fused RPM > 0 or the app's probe-driven `run_state`) → effort held to
+   a pulse-cycled ≤5 %-of-`duty_max` budget and commanded power reset so the
+   soft ramp governs the resume. Asserted by `scn_stalled_rotor`.
+2. **T3 Ah-revert** — `ah_since_charged` integrates net battery Ah during
+   FLOAT / STANDBY-rest (battery-truth tiers only), resets at every charged
+   exit, and arms the T3 Ah path in `revert_met()`. Asserted by `scn_ah_revert`.
+3. **Clamp-supply plausibility** — `ctrl_vsup_guard()` (`field.c`) vets the
+   voltage `duty_max` is computed from: rises follow instantly (tighter),
+   implausible drops (> 4 % below the trusted level) hold the tighter
+   last-trusted voltage and raise `CTRL_FAULT_VSUP_IMPLAUSIBLE` (WARN), and
+   out-of-band lows fall back to the worst case (highest plausible bus =
+   tightest clamp). Asserted by `scn_lying_vbat`.
+
+## Remaining known limitations (documented, not asserted)
+
+- **A consistent false-low from boot is undetectable** with a single physical
+  voltage source: the guard's cross-check and step detection need either a
+  trusted history or a second channel. A sustained (> 5 min) stable lower
+  reading is eventually re-trusted (WARN visible the whole time) — otherwise a
+  genuine bus re-level would over-tighten forever.
 - The soft-start ramps **watts** (per spec), not duty: duty crosses the
   sub-excitation dead zone (EMF < bus voltage, zero current possible) quickly,
   then tracks the power ramp — unlike stock's fixed ~2 %/s duty ramp.

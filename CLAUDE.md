@@ -24,7 +24,7 @@ verified hardware facts (§0.6 V1–V8), and safety rules (§5).
 - Firmware: CMake + ARM GCC (`cmake -B build && cmake --build build`); deps
   vendored via `scripts/fetch_deps.sh`.
 - Pure control core: `control/` (HAL-free) + native unit tests in `control/test/`.
-- SIL gauntlet: `sim/` — 9 scenarios/111 checks, runs in CI (`sil` job).
+- SIL gauntlet: `sim/` — 12 scenarios/148 checks, runs in CI (`sil` job).
 - Renode whole-firmware emulation: `renode/` (see its README), CI `emulation` job.
 - CI is the arbiter: `.github/workflows/build.yml` (tests, sil, firmware, emulation).
 
