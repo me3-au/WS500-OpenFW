@@ -14,6 +14,9 @@ set(APP_SRC
     Core/Src/field_drive.c
     Core/Src/sensors.c
     Core/Src/ina2xx.c
+    Core/Src/eeprom24c16.c
+    Core/Src/stator_rpm.c
+    Core/Src/dio.c
     Core/Src/config_protocol.c
     Core/Src/can_n2k.c
     control/Src/control.c

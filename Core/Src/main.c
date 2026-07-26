@@ -10,12 +10,16 @@
 #include "field_drive.h"
 #include "sensors.h"
 #include "ina2xx.h"
+#include "eeprom24c16.h"
+#include "stator_rpm.h"
+#include "dio.h"
 #include "control.h"
 #include "limits.h"
 #include "thermal.h"
 #include "telemetry.h"
 #include "config_protocol.h"
 #include "can_n2k.h"
+#include <math.h>
 
 #define LOOP_PERIOD_MS  10U
 
@@ -26,6 +30,11 @@ int main(void)
 
     field_drive_init();     /* starts at 0% — fail-safe */
     sensors_init();
+    eeprom24c16_init();     /* I2C2 config store bring-up; RAW driver only, no
+                             * record format yet -- config_protocol.c will
+                             * read/write it once the schema lands (GH#28) */
+    stator_rpm_init();      /* PA10 EXTI + TIM2 timebase */
+    dio_init();              /* DIP boot-read + PB13 + status outputs */
     config_init();
     can_n2k_init();
 
@@ -46,9 +55,30 @@ int main(void)
             next += LOOP_PERIOD_MS;
 
             sensors_update();
+            stator_rpm_update();
+            dio_poll();
             sensor_readings_t r;
             sensors_read(&r);
             config_get(&g, &prof);
+
+            /* RPM: stator_rpm_rpm() is NAN whenever poles/pulley_ratio aren't
+             * configured yet (GH#28) OR the signal itself is lost/implausible
+             * -- either way that must show up as rpm_state != VALID, never as
+             * a VALID state paired with a NaN value (a NaN silently fails
+             * downstream ">" comparisons like overspeed, which would be
+             * unsafe). Real signal freshness (stator_rpm_state()) is only
+             * consulted once rpm is confirmed to be a real number. */
+            const float stator_rpm_val = stator_rpm_rpm();
+            ctrl_rpm_state_t rpm_state;
+            if (isnan(stator_rpm_val)) {
+                rpm_state = CTRL_RPM_LOST;
+            } else {
+                switch (stator_rpm_state()) {
+                    case STATOR_RPM_FRESH: rpm_state = CTRL_RPM_VALID; break;
+                    case STATOR_RPM_STALE: rpm_state = CTRL_RPM_STALE; break;
+                    default:                rpm_state = CTRL_RPM_LOST;  break;
+                }
+            }
 
             /* Assemble the control input from physical readings. Signals from
              * not-yet-implemented drivers use conservative fail-safe placeholders. */
@@ -62,13 +92,19 @@ int main(void)
                 .alt_hotspot_c= r.alt_temp_c,           /* no hot-spot model yet */
                 .batt_temp_c  = r.batt_temp_c,
                 .driver_temp_c= r.driver_temp_c,
-                .rpm          = 0.0f,
-                .rpm_state    = CTRL_RPM_LOST,          /* TODO: PA10-EXTI+TIM2 / CAN fusion */
+                .rpm          = stator_rpm_val,
+                .rpm_state    = rpm_state,
                 .run_state    = CTRL_RUN_NOT_RUNNING,
                 .soc_pct      = -1.0f,
                 .soc_trusted  = false,
-                .ignition     = false,                  /* TODO: read PB13 (dio driver) */
-                .feature_in   = false,
+                /* PB13 is "Enable/Ignition OR Feature-In" (board.h/HW-spec;
+                 * exact split bench-pending). Wired to ignition as the
+                 * conservative interim choice -- "gates a control branch" is
+                 * the first-listed interpretation, and without it the engine
+                 * would have no enable source at all. Revisit once bench work
+                 * (or a second, still-unidentified pin) resolves the split. */
+                .ignition     = dio_ctrl_in(),
+                .feature_in   = false,                  /* TODO: same PB13 ambiguity above */
                 .ext_faults   = 0u,                     /* TODO: OR in BMS/shunt faults */
             };
 

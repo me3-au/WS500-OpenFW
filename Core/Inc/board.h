@@ -144,8 +144,13 @@
  *   this is the BC_Index DIP bank (schema: "0 = use DIP switches").
  * CONTROL INPUT: PB13 — polled, gates a control branch -> Enable/Ignition or
  *   Feature-In (manual wire 1 / 3). Exact label needs control-logic trace/bench.
- * STATUS OUTPUTS (driven 0/1 by state): PA0, PA9 (busiest), PA15, PB14 ->
- *   Lamp/Feature-Out (manual wire 2) + status LED(s). Which is which: bench.
+ *   Pull assumed pull-up here by convention with the confirmed DIP inputs
+ *   above; PB13's own pull config is NOT itself bench-confirmed (dio.c).
+ * STATUS OUTPUTS (driven 0/1 by state): PA0, PA9 (busiest), PB14 -> Lamp/
+ *   Feature-Out (manual wire 2) + status LED(s). Which is which: bench (dio.c
+ *   names these dio_out_a/dio_out_b rather than guessing Lamp vs LED).
+ *   PA15 was previously grouped here as an unidentified 4th candidate — §0.6 V7
+ *   resolves it as the EEPROM /WP line instead (below), NOT a status output.
  * Also static in MX_GPIO_Init: PC13-15, PB3-5, PC4, PC10.                        */
 #define DIP_PORT               GPIOA
 #define DIP_PINS               (GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_7)  /* batt-cap, PA4=LSB; pull-up */
@@ -153,9 +158,34 @@
 #define DIP_EXTRA_PINS         (GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2)  /* more DIP bits; pull-up */
 #define CTRL_IN_PORT           GPIOB
 #define CTRL_IN_PIN            GPIO_PIN_13  /* Enable/Ignition or Feature-In */
-#define STATUS_OUT_A_PINS      (GPIO_PIN_0 | GPIO_PIN_9 | GPIO_PIN_15) /* GPIOA LEDs/lamp */
+#define STATUS_OUT_A_PINS      (GPIO_PIN_0 | GPIO_PIN_9)  /* GPIOA LEDs/lamp (PA15 excluded: /WP, §0.6 V7) */
 #define STATUS_OUT_B_PINS      (GPIO_PIN_14)                          /* GPIOB */
 #define OUT_LAMP_OR_LED_PIN    GPIO_PIN_9   /* GPIOA, busiest output */
+
+/* ---- Config EEPROM: 24C16-class 2 KB serial EEPROM on I2C2 (§0.6 V7) ------- *
+ * 2048 bytes, 8 x 256-byte blocks (device-address block-select granularity),
+ * 16-byte page programming. 7-bit family address 0x50; the ACTUAL 8-bit device
+ * address on the wire is COMPUTED per access, not a literal byte — block-
+ * select bits are folded into the fixed 0xA0 family nibble:
+ *     dev_addr8 = 0xA0 | (((word_addr >> 8) & 0x7) << 1)
+ * (`adds …,#0xA0` at 0x0800DDF4 read / 0x0800E6C8 write — stock binary disasm
+ * 2026-07-24, §0.6 V7; this is why an earlier byte/constant search for 0xA0
+ * transactions came up empty). Read: 1-byte word address, retry x3. Write:
+ * 16-byte page programming, ~7 ms write-cycle wait per page (osDelay in stock;
+ * eeprom24c16.c uses HAL_Delay — this firmware is bare-metal, no RTOS).
+ * Write-protected by EEPROM_WP_PIN (PA15), driven LOW only for the duration of
+ * a write (`fn_E694` toggles it around the page-write loop).
+ * BUS CAVEAT (mirrors ina2xx.c, GH#36): V7 places BOTH the EEPROM and the
+ * INA226 on I2C2 (PB10/PB11); a bench scope of PB6/7 vs PB10/11 is still the
+ * open falsification step for both drivers together. eeprom24c16.c follows
+ * V7's resolved call (I2C2) since it is the newer, EEPROM-specific finding. */
+#define EEPROM_I2C_FAMILY_ADDR7  0x50U     /* 7-bit family address */
+#define EEPROM_SIZE_BYTES        2048U     /* 24C16: 2 Kbit x 8 = 2048 bytes */
+#define EEPROM_BLOCK_SIZE        256U      /* device-address block-select granularity */
+#define EEPROM_PAGE_SIZE         16U       /* page-programming write granularity */
+#define EEPROM_WRITE_CYCLE_MS    7U        /* post-page write-cycle wait (§0.6 V7) */
+#define EEPROM_WP_PORT           GPIOA
+#define EEPROM_WP_PIN            GPIO_PIN_15  /* /WP: LOW = write-enable, HIGH = protect */
 
 void board_init(void);        /* clocks + all peripheral GPIO/init */
 void board_clock_config(void);

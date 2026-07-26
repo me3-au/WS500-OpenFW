@@ -280,10 +280,14 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
   wired end-to-end in the app. **Remaining:** decision **#6a config strategy** (still 🧩).
 - **M3 — Core firmware.** 🔨 *in progress.* **Done (pure/CI-tested):** two-stage engine +
   profile 1, arbitration, CV/field loop, rotor clamp, thermal governor, fault ladder,
-  hardware limit set. **Remaining:** finish the driver side — INA2xx I²C transfers, stator/
-  TIM2 RPM capture, DIO (enable/Feature-In/lamp/LED), **CAN Rx for control (#10)** (BMS
-  permission/current) — plus inner-loop gain tuning, the §7 robustness layer (#21: IWDG,
-  fault handlers, crash records), and bench bring-up. *Exit:* closed-loop CV hold on the
+  hardware limit set. **Driver trio added 2026-07-26**: `stator_rpm.c` (PA10 EXTI +
+  TIM2 CNT-diff per V1/V2, feeds the §5.2 run-detect gate real RPM, fail-safe LOST
+  until poles/pulley configured), `eeprom24c16.c` (raw 24C16 per V7, PA15 /WP, no
+  record format until #6a), `dio.c` (DIP bank + PB13→ignition as flagged interim;
+  Lamp-vs-LED still unresolved). Bench-pending: I2C2 TIMING value, PB13 pull/role.
+  **Remaining:** INA2xx I²C transfers 🔨 (bus caveat GH#36), **CAN Rx for control
+  (#10)** (BMS permission/current) — plus inner-loop gain tuning, the §7 robustness
+  layer (#21: IWDG, fault handlers, crash records), and bench bring-up. *Exit:* closed-loop CV hold on the
   bench supply into a dummy load, with fault cutoff verified; IWDG active; an induced
   HardFault provably lands in safe state + crash record + clean reboot.
 - **M4 — Config + client app.** Config schema (per #6a), flash config store (CRC+version),

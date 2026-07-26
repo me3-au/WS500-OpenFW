@@ -87,5 +87,41 @@ void board_init(void)
     d.Pin = DIP_PINS;       HAL_GPIO_Init(DIP_PORT, &d);
     d.Pin = DIP_EXTRA_PINS; HAL_GPIO_Init(DIP_EXTRA_PORT, &d);
 
+    /* PB13 enable/feature input, polled + debounced in dio.c. Pull-up assumed
+     * by convention with the confirmed DIP inputs above; not itself bench-
+     * confirmed (board.h CTRL_IN_PIN comment). */
+    GPIO_InitTypeDef ci = {0};
+    ci.Mode = GPIO_MODE_INPUT;
+    ci.Pull = GPIO_PULLUP;
+    ci.Pin  = CTRL_IN_PIN;
+    HAL_GPIO_Init(CTRL_IN_PORT, &ci);
+
+    /* Status/DIO outputs: PA9 (OUT_LAMP_OR_LED_PIN, "busiest") + PB14
+     * (STATUS_OUT_B_PINS). Lamp-vs-LED role split is bench-pending (M2,
+     * IO_COVERAGE) — dio.c drives these as dio_out_a/dio_out_b without
+     * guessing which is which. Fail-safe default: off (LOW) at boot, same
+     * convention as field_drive's start-at-0%. PA0 is deliberately left
+     * unclaimed here (see board.h STATUS_OUT_A_PINS comment: it was formerly
+     * grouped with PA15, which §0.6 V7 resolved as the EEPROM /WP line, not a
+     * status output — there is no fact tying PA0 to either output channel). */
+    GPIO_InitTypeDef out = {0};
+    out.Mode  = GPIO_MODE_OUTPUT_PP;
+    out.Pull  = GPIO_NOPULL;
+    out.Speed = GPIO_SPEED_FREQ_LOW;
+    out.Pin = OUT_LAMP_OR_LED_PIN; HAL_GPIO_Init(GPIOA, &out);
+    out.Pin = STATUS_OUT_B_PINS;   HAL_GPIO_Init(GPIOB, &out);
+    HAL_GPIO_WritePin(GPIOA, OUT_LAMP_OR_LED_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, STATUS_OUT_B_PINS,   GPIO_PIN_RESET);
+
+    /* EEPROM /WP: PA15, GPIO output (§0.6 V7). Default HIGH (write-protected)
+     * at boot; eeprom24c16.c drives it LOW only for the duration of a write. */
+    GPIO_InitTypeDef wp = {0};
+    wp.Mode  = GPIO_MODE_OUTPUT_PP;
+    wp.Pull  = GPIO_NOPULL;
+    wp.Speed = GPIO_SPEED_FREQ_LOW;
+    wp.Pin   = EEPROM_WP_PIN;
+    HAL_GPIO_Init(EEPROM_WP_PORT, &wp);
+    HAL_GPIO_WritePin(EEPROM_WP_PORT, EEPROM_WP_PIN, GPIO_PIN_SET);
+
     /* USB PA11/PA12 handled by the USB HAL/PCD init (fixed pins). */
 }
