@@ -16,6 +16,7 @@
  *   P4  engine input grid          — dense combinatorial ctrl_tick() sweep
  *   P5  fault latching / clearing  — OPEN latches, WARN/LIMP/BLOCK do not
  *   P6  profile boundary sweeps    — §1/§3 edges + no-silent-auto-correction
+ *   P6b config validator conformance — the same table, against ctrl_config_validate
  *   P7  ceiling producers          — ctrl_limits_apply / ctrl_thermal_update
  *
  * SPDX-License-Identifier: MIT
@@ -24,6 +25,7 @@
 #include "arbitration.h"
 #include "limits.h"
 #include "thermal.h"
+#include "test_config.h"   /* baseline config + §1 primitive ladder (P6 conformance) */
 
 /* ---- shared input alphabets ------------------------------------------------ */
 
@@ -732,7 +734,9 @@ static const prop_param_t PARAMS[PP_N] = {
     { PP_WARMUP,     "warmup_time_s",      0.f,    600.f,   0.f,     601.f,   1 },
     { PP_COOLANT,    "warmup_coolant_c",   20.f,   90.f,    19.f,    91.f,    1 },
     { PP_SOC_TARGET, "soc_target_pct",     70.f,   100.f,   69.f,    101.f,   1 },
-    { PP_PTAIL,      "p_tail_w",           41.4f,  414.f,   41.f,    415.f,   1 },
+    /* §3.2 window is C-relative (0.01C-0.10C at 3.45 V/cell), so these bounds
+     * track the baseline bank: 300 Ah x 16S -> 165.6 .. 1656 W. */
+    { PP_PTAIL,      "p_tail_w",           165.6f, 1656.f,  165.5f,  1656.1f, 1 },
     { PP_TTAIL,      "t_tail_hold_s",      10.f,   600.f,   9.f,     601.f,   1 },
     { PP_CVTARGET,   "cv_target (v_bulk)", 3.45f,  3.65f,   3.44f,   3.66f,   1 },
     { PP_RESTV,      "rest_voltage (v_float)", 3.33f, 3.45f, 3.32f,  3.46f,   1 },
@@ -874,27 +878,225 @@ static void p6_profile_bounds(void)
         CHECK(e.cmd_power_w > 9.0f && e.cmd_power_w < 11.0f);
     }
 
-    /* ---- §1 cross-primitive guard rails ------------------------------------
-     * Ordering rules that a config validator must reject. There is no validator
-     * in the tree yet (Core/Src/config_protocol.c: `config_poll()` is a TODO,
-     * and control/ has no validation entry point), so these cases are listed
-     * here as the conformance table to wire up when it lands. The engine itself
-     * neither rejects nor corrects them — proven above — which is exactly why
-     * the rejection has to live in the config layer. */
+    /* The §1/§3 conformance table that used to be a GAP-NOTE here is now driven
+     * against the real validator — see p6b_config_conformance() below. */
+}
+
+/* =========================================================================== *
+ * P6b — the same parameter table, driven against the REAL validator
+ * ===========================================================================
+ * This section was a printed GAP-NOTE until control/Src/config_validate.c
+ * landed: the engine provably neither rejects nor repairs an out-of-range
+ * config (P6 above), so the rejection is owed by the config layer, and until
+ * that layer existed the rules could only be listed. They are now strict.
+ *
+ * Same PARAMS table, driven into a full persisted config instead of into
+ * (globals, profile) alone, because the validator sees things the engine never
+ * does: the §1 primitives block, the primitive REFS the profiles carry, and the
+ * hardware limit set.
+ */
+
+/* Mirror of set_param(), into the persisted config. */
+static void set_cfg_param(int id, float v, ctrl_config_t *c)
+{
+    ctrl_globals_t *g = &c->globals;
+    ctrl_profile_t *p = &c->profiles[0].p;      /* profile 1 — the active one */
+
+    switch (id) {
+    /* cells_series and bank_capacity_ah move the C-relative §3.2 tail window
+     * with them, so p_tail_w is re-materialized from its 0.04 C default exactly
+     * as it would be at config time — otherwise this sweep would be testing
+     * p_tail_w, not the parameter it names. */
+    case PP_CELLS:
+        g->cells_series = (v > 0.0f && v < 255.0f) ? (uint8_t)v : 0u;
+        g->p_tail_w = 0.04f * g->bank_capacity_ah * (float)g->cells_series * 3.45f;
+        break;
+    case PP_BANK_AH:
+        g->bank_capacity_ah = v;
+        g->p_tail_w = 0.04f * v * (float)g->cells_series * 3.45f;
+        break;
+    case PP_MAXW:       g->max_charge_power_w = v; break;
+    case PP_RAMP:       g->ramp_w_per_s = v; break;
+    case PP_TVCLAMP:    g->t_vclamp_s = as_u16(v); break;
+    case PP_TCHGMAX:    g->t_charge_max_min = as_u16(v); break;
+    case PP_WARMUP:     g->warmup_time_s = as_u16(v); break;
+    case PP_COOLANT:    g->warmup_coolant_c = v; break;
+    case PP_SOC_TARGET: g->soc_target_pct = as_i8(v); break;
+    case PP_PTAIL:      g->p_tail_w = v; break;
+    case PP_TTAIL:      g->t_tail_hold_s = as_u16(v); break;
+    /* The three voltages are §1 primitives, not free-standing profile fields:
+     * setting one re-derives the ladder and re-resolves every profile ref. */
+    case PP_CVTARGET:   cfg_test_set_primitive(c, CFG_PRIM_V_BULK,  v); break;
+    case PP_RESTV:      cfg_test_set_primitive(c, CFG_PRIM_V_FLOAT, v); break;
+    case PP_LIMPV:      cfg_test_set_primitive(c, CFG_PRIM_V_LIMP,  v); break;
+    case PP_VREVERT:    p->v_revert_vcell = v; break;
+    case PP_TREVERT:    p->t_revert_hold_s = as_u16(v); break;
+    case PP_SOCREVERT:  p->soc_revert_pct = as_i8(v); break;
+    case PP_AHREVERT:   p->ah_revert = v; break;
+    case PP_RESTCAP:    p->rest_power_cap_w = v; break;
+    case PP_CVHOLD:     g->cv_hold_exit_min = as_u16(v); break;
+    case PP_SKIPBULK:   g->skip_bulk_vcell = v; break;
+    default: break;
+    }
+}
+
+/* One check: set `param` to `v`, expect exactly `want`. */
+static void expect_cfg(int param, const char *what, float v, cfg_err_t want)
+{
+    ctrl_config_t c = cfg_test_baseline();
+    set_cfg_param(param, v, &c);
+    const cfg_err_t got = ctrl_config_validate(&c, NULL);
+    g_checks++;
+    if (got != want) {
+        g_fails++;
+        printf("FAIL %s:%d  %s %s = %.6g: expected %d (%s), got %d (%s)\n",
+               __FILE__, __LINE__, PARAMS[param].name, what, (double)v,
+               (int)want, cfg_err_str(want), (int)got, cfg_err_str(got));
+    }
+}
+
+typedef struct {
+    int       param;
+    cfg_err_t err_below;     /* expected code just BELOW the §3 range */
+    cfg_err_t err_above;     /* expected code just ABOVE it */
+    int       below_is_out;  /* 0 when PARAMS[].below is not actually outside */
+} prop_val_case_t;
+
+/* Every §3-ranged parameter of the table, with the rule it must trip. */
+static const prop_val_case_t VAL_CASES[] = {
+    { PP_CELLS,      CFG_ERR_RANGE_CELLS,          CFG_ERR_RANGE_CELLS,          1 },
+    { PP_BANK_AH,    CFG_ERR_RANGE_BANK_AH,        CFG_ERR_RANGE_BANK_AH,        1 },
+    { PP_MAXW,       CFG_ERR_RANGE_MAX_POWER,      CFG_ERR_RANGE_MAX_POWER,      1 },
+    { PP_RAMP,       CFG_ERR_RANGE_RAMP,           CFG_ERR_RANGE_RAMP,           1 },
+    { PP_TVCLAMP,    CFG_ERR_RANGE_T_VCLAMP,       CFG_ERR_RANGE_T_VCLAMP,       1 },
+    { PP_TCHGMAX,    CFG_ERR_RANGE_T_CHARGE_MAX,   CFG_ERR_RANGE_T_CHARGE_MAX,   1 },
+    /* warmup_time_s starts at 0, so "just below" is not representable. */
+    { PP_WARMUP,     CFG_OK,                       CFG_ERR_RANGE_WARMUP_TIME,    0 },
+    { PP_COOLANT,    CFG_ERR_RANGE_WARMUP_COOLANT, CFG_ERR_RANGE_WARMUP_COOLANT, 1 },
+    { PP_SOC_TARGET, CFG_ERR_RANGE_SOC_TARGET,     CFG_ERR_RANGE_SOC_TARGET,     1 },
+    { PP_PTAIL,      CFG_ERR_RANGE_P_TAIL,         CFG_ERR_RANGE_P_TAIL,         1 },
+    { PP_TTAIL,      CFG_ERR_RANGE_T_TAIL_HOLD,    CFG_ERR_RANGE_T_TAIL_HOLD,    1 },
+    { PP_CVTARGET,   CFG_ERR_RANGE_V_BULK,         CFG_ERR_RANGE_V_BULK,         1 },
+    { PP_RESTV,      CFG_ERR_RANGE_V_FLOAT,        CFG_ERR_RANGE_V_FLOAT,        1 },
+    /* v_limp's lower bound IS the §1 hard floor — same number, and the floor is
+     * the code the user gets for it. */
+    { PP_LIMPV,      CFG_ERR_FLOOR_LIMP,           CFG_ERR_RANGE_V_LIMP,         1 },
+};
+#define N_VAL_CASES ((int)(sizeof VAL_CASES / sizeof VAL_CASES[0]))
+
+static void p6b_config_conformance(void)
+{
+    /* ---- the baseline itself is legal, and nothing is repaired ------------- */
     {
-        static const char *const RULES[] = {
-            "v_bulk > v_bulk_cons > v_float, each by >= 0.03 V/cell",
-            "v_float > v_float_cons > v_limp, each by >= 0.02 V/cell",
-            "v_limp >= 3.20 V/cell (hard floor)",
+        ctrl_config_t c = cfg_test_baseline();
+        CHECK(ctrl_config_validate(&c, NULL) == CFG_OK);
+    }
+
+    /* ---- §1 cross-primitive guard rails, one violation at a time ----------
+     * Each mutation stays inside every OTHER rule's range, so the code returned
+     * names the rule under test and nothing else. */
+    {
+        ctrl_config_t c = cfg_test_baseline();
+        c.prim.v_bulk_cons = 3.58f;             /* v_bulk 3.60, gap 0.02 < 0.03 */
+        cfg_resolve_primitives(&c);
+        CHECK(ctrl_config_validate(&c, NULL) == CFG_ERR_ORDER_BULK_CONS);
+    }
+    {
+        ctrl_config_t c = cfg_test_baseline();
+        c.prim.v_bulk_cons = 3.42f;             /* v_float 3.40, gap 0.02 < 0.03 */
+        cfg_resolve_primitives(&c);
+        CHECK(ctrl_config_validate(&c, NULL) == CFG_ERR_ORDER_CONS_FLOAT);
+    }
+    {
+        ctrl_config_t c = cfg_test_baseline();
+        c.prim.v_float_cons = 3.39f;            /* v_float 3.40, gap 0.01 < 0.02 */
+        cfg_resolve_primitives(&c);
+        CHECK(ctrl_config_validate(&c, NULL) == CFG_ERR_ORDER_FLOAT_FCONS);
+    }
+    {
+        ctrl_config_t c = cfg_test_baseline();
+        c.prim.v_limp = 3.34f;                  /* v_float_cons 3.35, gap 0.01 */
+        cfg_resolve_primitives(&c);
+        CHECK(ctrl_config_validate(&c, NULL) == CFG_ERR_ORDER_FCONS_LIMP);
+    }
+    {
+        ctrl_config_t c = cfg_test_baseline();
+        c.prim.v_limp = 3.19f;                  /* below the 3.20 hard floor */
+        cfg_resolve_primitives(&c);
+        CHECK(ctrl_config_validate(&c, NULL) == CFG_ERR_FLOOR_LIMP);
+    }
+    /* Exactly-at-the-gap must be ACCEPTED (§1 says ">= 0.03", not "> 0.03") —
+     * one gap at a time, since the §1 ranges are too tight to sit all four on
+     * their minimum simultaneously. Also exercises CFG_VCELL_EPS: 3.60f - 3.57f
+     * is 0.0299997 in float32, and rejecting that would be an auto-correction
+     * by arithmetic accident. */
+    {
+        static const float EXACT[4][4] = {          /* cons, float, fcons, limp */
+            { 3.57f, 3.40f, 3.35f, 3.30f },         /* v_bulk - cons  = 0.03 */
+            { 3.48f, 3.45f, 3.35f, 3.30f },         /* cons  - float  = 0.03 */
+            { 3.50f, 3.40f, 3.38f, 3.30f },         /* float - fcons  = 0.02 */
+            { 3.50f, 3.40f, 3.35f, 3.33f },         /* fcons - limp   = 0.02 */
+        };
+        for (int i = 0; i < 4; i++) {
+            ctrl_config_t c = cfg_test_baseline();
+            c.prim.v_bulk_cons  = EXACT[i][0];
+            c.prim.v_float      = EXACT[i][1];
+            c.prim.v_float_cons = EXACT[i][2];
+            c.prim.v_limp       = EXACT[i][3];
+            cfg_resolve_primitives(&c);
+            CHECK(ctrl_config_validate(&c, NULL) == CFG_OK);
+        }
+    }
+
+    /* ---- §3 ranges: min / max accepted, just-outside rejected by name ------ */
+    for (int i = 0; i < N_VAL_CASES; i++) {
+        const prop_val_case_t *vc = &VAL_CASES[i];
+        const prop_param_t *pp = &PARAMS[vc->param];
+        expect_cfg(vc->param, "min",   pp->lo,    CFG_OK);
+        expect_cfg(vc->param, "max",   pp->hi,    CFG_OK);
+        if (vc->below_is_out)
+            expect_cfg(vc->param, "below", pp->below, vc->err_below);
+        expect_cfg(vc->param, "above", pp->above, vc->err_above);
+    }
+
+    /* ---- the parameters PROFILE_SPEC §3 still gives no range for -----------
+     * These are NOT free: the validator holds them to physical sanity. What it
+     * cannot do is reject a value that is merely unreasonable, because the spec
+     * does not say what reasonable is — so the table below stays as the standing
+     * record of the gap, now with the enforced half asserted. */
+    {
+        static const struct { int param; float insane; cfg_err_t err; } SANITY[] = {
+            { PP_VREVERT,   -1.0f, CFG_ERR_SANITY_V_REVERT },
+            { PP_AHREVERT,  -1.0f, CFG_ERR_SANITY_AH_REVERT },
+            { PP_RESTCAP,   -1.0f, CFG_ERR_SANITY_REST_POWER_CAP },
+            { PP_SKIPBULK,  -1.0f, CFG_ERR_SANITY_SKIP_BULK_VCELL },
+            { PP_VREVERT,    NAN,  CFG_ERR_SANITY_V_REVERT },
+            { PP_AHREVERT,   NAN,  CFG_ERR_SANITY_AH_REVERT },
+            { PP_RESTCAP,    NAN,  CFG_ERR_SANITY_REST_POWER_CAP },
+            { PP_SKIPBULK,   NAN,  CFG_ERR_SANITY_SKIP_BULK_VCELL },
         };
         int unspecified = 0;
         for (int i = 0; i < PP_N; i++) if (!PARAMS[i].spec_ranged) unspecified++;
-        printf("  [P6] GAP-NOTE: no config validator exists (Core/Src/config_protocol.c\n"
-               "       config_poll() is a TODO; control/ has no validator). %d §1 ordering\n"
-               "       rules and %d of %d swept parameters have no enforceable range:\n",
-               (int)(sizeof RULES / sizeof RULES[0]), unspecified, (int)PP_N);
-        for (size_t i = 0; i < sizeof RULES / sizeof RULES[0]; i++)
-            printf("         - %s\n", RULES[i]);
+
+        /* Out-of-"range" values for these are accepted, by design: there is no
+         * range. soc_revert_pct is the one exception — a percentage above 100
+         * is not a spec range, it is arithmetic. */
+        for (int i = 0; i < PP_N; i++) {
+            if (PARAMS[i].spec_ranged) continue;
+            if (PARAMS[i].id == PP_SOCREVERT) continue;
+            expect_cfg(PARAMS[i].id, "below-nominal", PARAMS[i].below, CFG_OK);
+            expect_cfg(PARAMS[i].id, "above-nominal", PARAMS[i].above, CFG_OK);
+        }
+        expect_cfg(PP_SOCREVERT, "disabled", -1.0f, CFG_OK);
+        expect_cfg(PP_SOCREVERT, "above",   101.0f, CFG_ERR_RANGE_SOC_REVERT);
+
+        for (size_t i = 0; i < sizeof SANITY / sizeof SANITY[0]; i++)
+            expect_cfg(SANITY[i].param, "insane", SANITY[i].insane, SANITY[i].err);
+
+        printf("  [P6] §1 orderings + %d of %d swept parameters are enforced by\n"
+               "       ctrl_config_validate(); %d still have NO numeric range in\n"
+               "       PROFILE_SPEC §3 and carry physical-sanity checks only:\n",
+               PP_N - unspecified, (int)PP_N, unspecified);
         for (int i = 0; i < PP_N; i++)
             if (!PARAMS[i].spec_ranged)
                 printf("         - %s: no numeric range in PROFILE_SPEC §3\n", PARAMS[i].name);
@@ -980,6 +1182,7 @@ void test_property(void)
     p4_engine_grid();
     p5_fault_latching();
     p6_profile_bounds();
+    p6b_config_conformance();
     p7_ceiling_producers();
     printf("  [§8.4] sweeps evaluated %llu invariant points\n",
            (unsigned long long)g_prop_points);

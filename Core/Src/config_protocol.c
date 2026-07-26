@@ -1,17 +1,54 @@
 /*
- * config_protocol.c — stub. Resolves globals + active profile the engine reads.
+ * config_protocol.c — resolves globals + active profile the engine reads.
  * Defaults below are placeholders (profile 1 "Bulk, Float Norm", PROFILE_SPEC
  * §3/§4/§7), NOT tuned values; max_charge_power_w = 0 keeps output off until a
- * real config is loaded. Flash load + USB-CDC parse land here next.
+ * real config is loaded. They are also the FALLBACK: a persisted record only
+ * displaces them if it survives both the store (magic/version/CRC/generation,
+ * config_store.c) and ctrl_config_validate(). USB-CDC parse lands here next.
  * SPDX-License-Identifier: MIT
  */
 #include "config_protocol.h"
+#include "config_store_glue.h"
+#include "config_validate.h"
 #include <math.h>
 
 static ctrl_globals_t s_g;
 static ctrl_profile_t s_prof;
 static ctrl_limits_t  s_lim;
 static ctrl_thermal_cfg_t s_th;
+
+/* Boot-time store result, kept for the §7 fault/telemetry surface. */
+static cfg_store_status_t s_store_status = CFG_STORE_EMPTY;
+static cfg_err_t          s_store_val_err = CFG_OK;
+
+/*
+ * Overlay a persisted config on top of the defaults above — belt and braces:
+ * the store has already proved the record's framing and CRC, and this proves
+ * its CONTENT against PROFILE_SPEC §1/§3 before a single field reaches the
+ * engine. Any failure at all leaves the compiled defaults in place.
+ */
+static void config_load_persisted(void)
+{
+    ctrl_config_t stored;
+    s_store_status  = config_store_load(&stored);
+    s_store_val_err = CFG_OK;
+
+    if (s_store_status != CFG_STORE_OK) return;   /* blank part or I/O — defaults stand */
+
+    /* NULL out-param for now: nothing consumes the failing profile index yet.
+     * The §7 telemetry surface below should ask for it — that is what turns
+     * "config rejected" into "profile 4 rest voltage is not v_float_cons". */
+    s_store_val_err = ctrl_config_validate(&stored, NULL);
+    if (s_store_val_err != CFG_OK) return;        /* rejected, never repaired (§1) */
+
+    s_g    = stored.globals;
+    s_lim  = stored.limits;
+    s_prof = stored.profiles[stored.active_profile - 1u].p;
+
+    /* NOT persisted by schema v1: the thermal governor config (ctrl_thermal_cfg_t
+     * lives in thermal.h, and PROFILE_SPEC §7 has no thermal block) keeps its
+     * placeholders below. Adding it is a schema_version bump. */
+}
 
 void config_init(void)
 {
@@ -60,9 +97,20 @@ void config_init(void)
     s_th.derate_floor_w = 100.0f;
     s_th.ceiling_max_w  = 100000.0f;   /* effectively unbound until temp climbs */
     s_th.gain_w_per_c_s = 50.0f;
+
+    /* Persisted config wins over the placeholders above when it is both intact
+     * and valid.
+     * TODO(§7 / module #21): a rejected or unreadable store is currently silent
+     * — s_store_status / s_store_val_err below are the hookup point for the
+     * fault + telemetry surface (INFO "using defaults", WARN "config rejected:
+     * <cfg_err_str>"), which does not exist yet. */
+    config_load_persisted();
 }
 
 void config_poll(void) { /* TODO: USB CDC lines → parse/validate/apply. */ }
+
+cfg_store_status_t config_store_status(void)       { return s_store_status; }
+cfg_err_t          config_store_validate_err(void) { return s_store_val_err; }
 
 void config_get(ctrl_globals_t *g, ctrl_profile_t *prof) { *g = s_g; *prof = s_prof; }
 void config_get_limits(ctrl_limits_t *lim) { *lim = s_lim; }

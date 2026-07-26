@@ -18,6 +18,7 @@ set(APP_SRC
     Core/Src/stator_rpm.c
     Core/Src/dio.c
     Core/Src/config_protocol.c
+    Core/Src/config_store_glue.c
     Core/Src/can_n2k.c
     control/Src/control.c
     control/Src/arbitration.c
@@ -26,6 +27,9 @@ set(APP_SRC
     control/Src/faults.c
     control/Src/thermal.c
     control/Src/telemetry.c
+    control/Src/config_codec.c
+    control/Src/config_validate.c
+    control/Src/config_store.c
 )
 
 # --- Vendored deps you must add (see Drivers/README.md) ---

@@ -14,6 +14,7 @@ void test_limits(void);
 void test_faults(void);
 void test_thermal(void);
 void test_telemetry(void);
+void test_config(void);     /* packed config record: codec / slots / validator */
 void test_property(void);   /* §8.4 sweep-based invariant + boundary tests */
 void test_fuzz(void);       /* §8.4 randomized fault injection, fixed seeds */
 
@@ -26,6 +27,7 @@ int main(void)
     test_faults();
     test_thermal();
     test_telemetry();
+    test_config();
     test_property();
     test_fuzz();
 
