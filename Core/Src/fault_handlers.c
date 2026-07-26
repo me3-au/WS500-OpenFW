@@ -219,7 +219,9 @@ void USART1_IRQHandler(void)                 WS500_UNCLAIMED_IRQ;
 void USART2_IRQHandler(void)                 WS500_UNCLAIMED_IRQ;
 void USART3_4_IRQHandler(void)               WS500_UNCLAIMED_IRQ;
 void CEC_CAN_IRQHandler(void)                WS500_UNCLAIMED_IRQ;
-void USB_IRQHandler(void)                    WS500_UNCLAIMED_IRQ;  /* TODO(GH#35): the CDC stack claims this */
+/* USB_IRQHandler: CLAIMED by Core/Src/usb_cdc.c (GH#35, 2026-07-27) — alias
+ * removed per the maintenance rule above (the duplicate-symbol link error this
+ * line caused was the designed hand-off signal). */
 
 /* ---- Non-exception entries into the same funnel -------------------------- */
 
