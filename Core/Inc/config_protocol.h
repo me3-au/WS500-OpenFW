@@ -1,8 +1,10 @@
 /*
- * config_protocol.h — config transport + resolution over USB CDC (stub).
- * Produces the RESOLVED control config (globals + active profile + hardware
- * limit set + thermal governor config) the engine/app consume. Full profile
- * schema (PROFILE_SPEC §7) parse/store lands here.
+ * config_protocol.h — the app's config owner and its USB-CDC surface.
+ *
+ * Holds the whole PROFILE_SPEC §7 model, loads/persists it through the config
+ * store, serves the JSON-lines protocol (control/Inc/config_msg.h) over the
+ * cfg_stream.h byte transport, and publishes the RESOLVED slice the engine
+ * consumes: globals + active profile + hardware limit set + thermal config.
  * SPDX-License-Identifier: MIT
  */
 #ifndef WS500_CONFIG_PROTOCOL_H
@@ -14,7 +16,11 @@
 #include "config_validate.h"/* cfg_err_t */
 
 void config_init(void);              /* compiled defaults, then the EEPROM record */
-void config_poll(void);              /* service inbound config traffic */
+
+/* Service inbound config traffic: drains cfg_proto_rx() and dispatches complete
+ * JSON lines. Bounded work per call; safe to call every main-loop iteration.
+ * A config WRITE performed here blocks on the EEPROM (see config_protocol.c). */
+void config_poll(void);
 
 /* How the boot-time load went, for the §7 fault/telemetry surface (module #21).
  * CFG_STORE_OK + CFG_OK = the running config came from the EEPROM; anything

@@ -19,6 +19,7 @@ set(APP_SRC
     Core/Src/dio.c
     Core/Src/config_protocol.c
     Core/Src/config_store_glue.c
+    Core/Src/cfg_stream.c
     Core/Src/can_n2k.c
     control/Src/control.c
     control/Src/arbitration.c
@@ -30,6 +31,9 @@ set(APP_SRC
     control/Src/config_codec.c
     control/Src/config_validate.c
     control/Src/config_store.c
+    control/Src/config_json.c
+    control/Src/config_doc.c
+    control/Src/config_msg.c
 )
 
 # --- Vendored deps you must add (see Drivers/README.md) ---

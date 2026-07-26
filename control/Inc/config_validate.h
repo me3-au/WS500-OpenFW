@@ -110,4 +110,13 @@ cfg_err_t ctrl_config_validate(const ctrl_config_t *cfg, int *bad_profile);
 /* Stable short text for a code (logging / client error surface). */
 const char *cfg_err_str(cfg_err_t e);
 
+/*
+ * The code's own ENUM NAME, e.g. "CFG_ERR_RANGE_V_BULK". This is what the JSON
+ * config protocol puts in a rejection's "code" field (config_msg.h), so that
+ * the wire, this header and PROFILE_SPEC all use one word for one rule and a
+ * client can match on it without parsing prose. cfg_err_str() stays the human
+ * sentence and travels as "detail". Unknown codes return "CFG_ERR_UNKNOWN".
+ */
+const char *cfg_err_name(cfg_err_t e);
+
 #endif /* WS500_CONFIG_VALIDATE_H */

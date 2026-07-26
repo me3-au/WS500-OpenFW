@@ -19,6 +19,17 @@
 /* Human-readable form — telemetry, USB CDC banner, CAN product info. */
 #define FW_VERSION_STRING  "0.1.0-dev"
 
+/*
+ * Short git hash of the build, injected by the build system as
+ * -DFW_GIT_HASH="\"abc1234\"". Empty when nothing supplied one, and an empty
+ * value makes the hello handshake OMIT the "git" field (docs/VERSIONING.md §2)
+ * rather than report a placeholder identity — an unidentifiable build must look
+ * unidentifiable, not look like a release.
+ */
+#ifndef FW_GIT_HASH
+#define FW_GIT_HASH        ""
+#endif
+
 /* Packed BCD form 0x00MMmmpp (major/minor/patch, one byte each) for compact
  * reporting, e.g. 0x00000100 = 0.1.0. Dev/pre-release status is not encoded. */
 #define FW_VERSION_BCD                                             \
