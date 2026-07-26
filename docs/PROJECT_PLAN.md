@@ -247,7 +247,7 @@ settles most of them):
 | 18 | **Versioning + release** | `VERSION` (0.1.0-dev) + `Core/Inc/version.h` + `CHANGELOG.md` ✅ (2026-07-24); tag/release flow exercised at M6 | M0→M6 | 🔨 |
 | 19 | **Emulation harness** | Renode model (STM32F072 + peripherals + INA stub) for hardware-free dev/CI; part of the §8 virtual-first strategy with the SIL plant sim (8.1). ✅ **CI-green 2026-07-26**: `renode/` harness boots the real ELF, `ctrl_tick` liveness verified in the `emulation` job. V6 stock-trace use still ⬜ | M0→M1 | ✅ |
 | 20 | **Telemetry / logging** | log stream over USB CDC / CAN (per `CONTROL_SPEC`) | M4–M5 | ⬜ |
-| 21 | **Robustness / error reporting** | §7: safe-state funnel, IWDG checkpoint policy, reset-cause + `.noinit` crash records, HardFault/NMI handlers, flash CRC + SRAM parity, PVD brown-out, peripheral error budgets | M3–M4 | ⬜ |
+| 21 | **Robustness / error reporting** | §7 R0–R6 ✅ **implemented + CI-proven 2026-07-27** (GH#27 closed): funnel, windowed checkpoint IWDG, `.noinit` crash ring + reset-cause counters, two-stage M0 fault handlers, flash CRC (report-only) + stack painting + bottom-of-RAM stack, PVD, err budgets. Renode proves the M3 fault-path criterion in CI. Bench-pending: IWDG/PVD behavior, SRAM-parity + BOR option bytes (manual, M1-adjacent); telemetry surface with #20 | M3–M4 | ✅ fw side |
 
 ## 2. Milestones (safety and recovery come before any flash write)
 
