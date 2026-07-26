@@ -230,7 +230,7 @@ settles most of them):
 | 3 | HW documentation | `WS500_HARDWARE_SPEC.md`, `IO_COVERAGE.md` | M0–M2 | ✅ (open items) |
 | 4 | Control/design spec | `CONTROL_SPEC_NEXTGEN.md` + `PROFILE_SPEC_LFP.md` (+ fault codes, loop numerics); **cross-referenced against the GPL VSR source (§0.5)** | M2.5–M3 | 🔨 |
 | 5 | OS firmware | `Core/` (board/field/main real; sensors/ina/config/can stub) + pure `control/` core | M2–M3 | 🔨 |
-| 6 | Config protocol + store | **Store ✅ 2026-07-26**: pure codec (310-B v1 record, CRC-32, field-wise LE) + §1/§3 validator (named per-rule codes, never repairs) + two-slot power-fail-safe store over the 24C16 (torn-write proven in tests); `config_protocol.c` adopts only CRC-valid+validated records. **Remaining 🔨**: USB-CDC JSON protocol + hello handshake (VERSIONING.md) | M4 | 🔨 |
+| 6 | Config protocol + store | **Firmware side ✅ 2026-07-26**: codec (310-B v1 record, CRC-32) + §1/§3 validator (named codes, never repairs) + two-slot power-fail-safe store + **JSON-lines protocol** (VERSIONING.md hello, cfg-get/cfg-set fixed point, bit-exact float round-trip, bounded no-alloc parser in the pure core). **Remaining**: USB CDC transport glue (with #20/GH#35) + bench round-trip | M4 | 🔨 |
 | 6a | **Config strategy decision** | **DECIDED: B — clean break to the PROFILE_SPEC §7 JSON schema**; packed binary+CRC in EEPROM; stock-dump translation lives in the client app | M2/M3 | ✅ (2026-07-26) |
 | 7 | Update/rollback/backup/recovery | `FLASH_AND_RECOVERY.md` (+ §3) | M1 | ⬜ |
 | 8 | Client app | **WebSerial/WebUSB web app** (PC/Mac/Android: program+monitor+firmware, one codebase) + native `tools/ws500ctl/` CLI (scripting/CI/flash). iOS = monitor via CAN/VRM only. See `CLIENT_CONNECTIVITY.md` | M4 | ⬜ |
