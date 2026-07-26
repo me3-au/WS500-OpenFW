@@ -243,7 +243,7 @@ settles most of them):
 | 16 | **License + third-party NOTICE** | **LICENSE = MIT** ✅ + `NOTICE` ✅ (CMSIS Apache-2.0 / HAL BSD-3 / NMEA2000 MIT-planned; Thomason courtesy attribution; **no GPL code in-tree — VSR is reference-only**); README/OPEN_SOURCE license text aligned | **M0 (now)** | ✅ |
 | 17 | **OSS hygiene** | `CONTRIBUTING.md` (no-GPL + safety-gate rules), `CODE_OF_CONDUCT.md`, `SECURITY.md` (unsafe-charging = security-priority), issue/PR templates incl. hardware-fact provenance template, README badges — all done 2026-07-24 | M0 | ✅ |
 | 18 | **Versioning + release** | `VERSION` (0.1.0-dev) + `Core/Inc/version.h` + `CHANGELOG.md` ✅ (2026-07-24); tag/release flow exercised at M6 | M0→M6 | 🔨 |
-| 19 | **Emulation harness** | Renode model (STM32F072 + peripherals + INA stub) for hardware-free dev/CI; part of the §8 virtual-first strategy with the SIL plant sim (8.1) | M0→M1 | ⬜ |
+| 19 | **Emulation harness** | Renode model (STM32F072 + peripherals + INA stub) for hardware-free dev/CI; part of the §8 virtual-first strategy with the SIL plant sim (8.1). ✅ **CI-green 2026-07-26**: `renode/` harness boots the real ELF, `ctrl_tick` liveness verified in the `emulation` job. V6 stock-trace use still ⬜ | M0→M1 | ✅ |
 | 20 | **Telemetry / logging** | log stream over USB CDC / CAN (per `CONTROL_SPEC`) | M4–M5 | ⬜ |
 | 21 | **Robustness / error reporting** | §7: safe-state funnel, IWDG checkpoint policy, reset-cause + `.noinit` crash records, HardFault/NMI handlers, flash CRC + SRAM parity, PVD brown-out, peripheral error budgets | M3–M4 | ⬜ |
 
@@ -256,9 +256,12 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
   (`scripts/fetch_deps.sh`) ✅, `stm32f0xx_hal_conf.h` ✅.
   Done also: **license + NOTICE (#16)** ✅ (MIT + NOTICE, 2026-07-23); **OSS hygiene
   (#17)** ✅, **versioning scaffold (#18)** ✅, **issue/milestone sync** ✅ (all
-  2026-07-24). Remaining: **stand up the Renode emulation harness (#19 / GH#25)**.
-  *Exit:* repo builds green in CI; MIT LICENSE + NOTICE in place; issues created; emulator
-  runs the built ELF far enough to exercise `main()`.
+  2026-07-24); **Renode emulation harness (#19 / GH#25)** ✅ (2026-07-26 — CI
+  `emulation` job boots the real ELF and verifies `ctrl_tick` iterates; see
+  `renode/README.md`).
+  *Exit criteria all met (2026-07-26):* repo builds green in CI; MIT LICENSE + NOTICE in
+  place; issues created; emulator runs the built ELF far enough to exercise `main()`.
+  **M0 complete.**
 - **M1 — Backup & recovery proven** → *no custom firmware is flashed before this passes.*
   Verified stock-image backup, documented+rehearsed DFU restore, SWD permanently wired,
   BOOT0/DFU entry-exit rehearsed. *Exit:* stock image demonstrably restores the unit via DFU
@@ -469,10 +472,17 @@ a 48 V system (§5). Four virtual layers, cheapest first; all run in CI:
     run-detect/stationary-rotor budget (§5.2) absent from the pure core; dynamic clamp
     trusts measured supply V (in-range sensor lies loosen it — needs plausibility); T3
     Ah-revert integrator unwired.
-- **8.2 Renode — whole-firmware emulation (#19).** STM32F072 machine model + INA226 I²C
-  stub + CAN loopback: boot the real ELF, exercise `main()`'s loop, fault paths (§7:
-  induced HardFault → safe state + crash record), watchdog starvation, and DFU-adjacent
-  boot behavior. Also dry-runs any risky bench procedure first (§5 rule 7).
+- **8.2 Renode — whole-firmware emulation (#19).** ✅ **HARNESS BUILT + CI-GREEN
+  2026-07-26 (`renode/`, GH#25).** Stock Renode STM32F072 platform (thin overlay, no
+  hand-written peripherals); the CI `emulation` job boots the real `ws500-openfw.elf`
+  and asserts via function-name logging that `ctrl_tick` enters and re-enters (10 ms
+  loop lives) and `Error_Handler` is never hit. All five predicted bring-up risks
+  (HSI48RDY, bxCAN INAK, ADC/DMA, I²C stub, renode-test plumbing) cleared — only fix
+  needed was `${CURDIR}`-anchoring the robot-test paths. **Still to build on it:**
+  fault-path tests (§7: induced HardFault → safe state + crash record), watchdog
+  starvation, DFU-adjacent boot behavior, INA226/EEPROM I²C device stubs, and the V6
+  stock-binary trace (`ws500-stock-trace.resc`). Also dry-runs any risky bench
+  procedure first (§5 rule 7).
 - **8.3 Stock-binary verification (§0.6 V1–V4, V6–V8).** Every RE fact our drivers depend
   on gets re-derived or refuted before the driver is trusted (BKIN, PWM frequency, INA
   register map, config storage, β3380 channel identity).
