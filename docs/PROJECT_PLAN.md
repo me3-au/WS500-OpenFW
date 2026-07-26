@@ -246,7 +246,7 @@ settles most of them):
 | 17 | **OSS hygiene** | `CONTRIBUTING.md` (no-GPL + safety-gate rules), `CODE_OF_CONDUCT.md`, `SECURITY.md` (unsafe-charging = security-priority), issue/PR templates incl. hardware-fact provenance template, README badges — all done 2026-07-24 | M0 | ✅ |
 | 18 | **Versioning + release** | `VERSION` (0.1.0-dev) + `Core/Inc/version.h` + `CHANGELOG.md` ✅ (2026-07-24); tag/release flow exercised at M6 | M0→M6 | 🔨 |
 | 19 | **Emulation harness** | Renode model (STM32F072 + peripherals + INA stub) for hardware-free dev/CI; part of the §8 virtual-first strategy with the SIL plant sim (8.1). ✅ **CI-green 2026-07-26**: `renode/` harness boots the real ELF, `ctrl_tick` liveness verified in the `emulation` job. V6 stock-trace use still ⬜ | M0→M1 | ✅ |
-| 20 | **Telemetry / logging** | log stream over USB CDC / CAN (per `CONTROL_SPEC`) | M4–M5 | ⬜ |
+| 20 | **Telemetry / logging** | **USB half ✅ 2026-07-27**: MIT CDC-ACM transport (ST middleware rejected, SLA0044) + 1 Hz JSON telem line + telem-get with the §7 diag surfaces; caps ["cfg","telem"]. Bench-pending: real-host enumeration; release: permanent PID. CAN half ⬜ (with #9/#18) | M4–M5 | 🔨 |
 | 21 | **Robustness / error reporting** | §7 R0–R6 ✅ **implemented + CI-proven 2026-07-27** (GH#27 closed): funnel, windowed checkpoint IWDG, `.noinit` crash ring + reset-cause counters, two-stage M0 fault handlers, flash CRC (report-only) + stack painting + bottom-of-RAM stack, PVD, err budgets. Renode proves the M3 fault-path criterion in CI. Bench-pending: IWDG/PVD behavior, SRAM-parity + BOR option bytes (manual, M1-adjacent); telemetry surface with #20 | M3–M4 | ✅ fw side |
 
 ## 2. Milestones (safety and recovery come before any flash write)
