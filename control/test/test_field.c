@@ -105,12 +105,21 @@ void test_field(void)
         CHECK(!bad);
 
         /* Sustained genuinely-lower level re-anchors after the distrust hold
-         * (WARN visible throughout), so a real sag doesn't over-tighten forever. */
+         * (WARN visible throughout), so a real sag doesn't over-tighten forever.
+         * Since the §8.4 floor fix the returned clamp voltage additionally never
+         * drops below CTRL_VSUP_FLOOR_VCELL x cells (51.2 V @16S) — the track
+         * re-anchors to 50.0 but the floor wins on the way out. */
         ctrl_vsup_guard_t fg4; ctrl_vsup_guard_init(&fg4);
         ctrl_vsup_guard(&fg4, 57.6f, 57.6f, 16, 10, &bad);
         for (uint32_t t = 0; t < CTRL_VSUP_DISTRUST_MAX_MS; t += 1000)
             v = ctrl_vsup_guard(&fg4, 50.0f, 50.0f, 16, 1000, &bad);
-        CHECK_FEQ(v, 50.0f, 0.001f);              /* accepted after the hold */
+        CHECK_FEQ(v, CTRL_VSUP_FLOOR_VCELL * 16.0f, 0.001f);  /* floored re-anchor */
+        /* A re-anchor ABOVE the floor passes through unchanged. */
+        ctrl_vsup_guard_t fg4b; ctrl_vsup_guard_init(&fg4b);
+        ctrl_vsup_guard(&fg4b, 57.6f, 57.6f, 16, 10, &bad);
+        for (uint32_t t = 0; t < CTRL_VSUP_DISTRUST_MAX_MS; t += 1000)
+            v = ctrl_vsup_guard(&fg4b, 52.0f, 52.0f, 16, 1000, &bad);
+        CHECK_FEQ(v, 52.0f, 0.001f);              /* accepted after the hold */
 
         /* Absurdly low reading with no trusted history → WORST CASE: highest
          * plausible bus = tightest clamp (never the loosest). */

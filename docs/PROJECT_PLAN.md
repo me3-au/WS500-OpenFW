@@ -492,10 +492,20 @@ a 48 V system (§5). Four virtual layers, cheapest first; all run in CI:
 - **8.3 Stock-binary verification (§0.6 V1–V4, V6–V8).** Every RE fact our drivers depend
   on gets re-derived or refuted before the driver is trusted (BKIN, PWM frequency, INA
   register map, config storage, β3380 channel identity).
-- **8.4 Property/fault-injection tests on the pure core.** Extend `control/test/` beyond
-  example-based: sweep-based invariant checks (field ≤ clamp under *all* input
-  combinations; faults latch; arbitration monotonicity), boundary sweeps on profile
-  parameters, and randomized sensor-noise runs with fixed seeds.
+- **8.4 Property/fault-injection tests on the pure core.** ✅ **BUILT 2026-07-26**
+  (`control/test/prop.h`, `test_property.c`, `test_fuzz.c` — 48 M invariant points,
+  ~2 s runtime, in the CI tests job via the existing glob). Sweeps P1–P7 (rotor clamp
+  under all input combos incl. NaN/inf, fault-disposition over all 2^17 bit subsets,
+  arbitration monotonicity, profile boundary configs) + 16 fixed-seed fuzz runs
+  (4 M ticks, 5 seeds pin duty/duty_max = 1.0000 exactly at the boundary).
+  **Payoff: 2 latent NaN-escape defects found and fixed** (ctrl_effort_to_duty NaN
+  effort; ctrl_duty_max inf/inf) **+ 1 new clamp-guard hole closed**: a false-low
+  drifting slower than the 4 %/tick step threshold walked the clamp to 1.8× rated
+  rotor exposure → added `CTRL_VSUP_FLOOR_VCELL` (3.2 V/cell, v_limp's spec floor)
+  hard-bounding ANY false-low to ≈1.13× rated on this install. Residual design
+  points pinned as self-expiring EXPECTED-GAP markers. Spec gaps logged: 7 params
+  lack §3 ranges; `rest_power_cap_w` %-form unimplemented; no config validator
+  exists yet (§1 guard rails unenforced — M4/#6a work).
 
 **Reference data for 8.1 (captured 2026-07-24):** a live stock charge run over serial gives
 a real trace to validate the plant model + rotor clamp against — 25 % field clamp,

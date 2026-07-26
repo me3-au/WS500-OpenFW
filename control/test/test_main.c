@@ -14,6 +14,8 @@ void test_limits(void);
 void test_faults(void);
 void test_thermal(void);
 void test_telemetry(void);
+void test_property(void);   /* §8.4 sweep-based invariant + boundary tests */
+void test_fuzz(void);       /* §8.4 randomized fault injection, fixed seeds */
 
 int main(void)
 {
@@ -24,6 +26,8 @@ int main(void)
     test_faults();
     test_thermal();
     test_telemetry();
+    test_property();
+    test_fuzz();
 
     printf("\n%d checks, %d failures\n", g_checks, g_fails);
     return g_fails ? 1 : 0;

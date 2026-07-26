@@ -28,6 +28,16 @@
  * [SPEC-SIGNOFF] band/step/re-anchor values are engineering choices, not spec'd. */
 #define CTRL_VSUP_MAX_VCELL        4.0f    /* highest plausible live bus (V/cell) */
 #define CTRL_VSUP_MIN_VCELL        2.0f    /* below this the reading is nonsense */
+#define CTRL_VSUP_FLOOR_VCELL      3.2f    /* clamp-voltage hard floor (V/cell).
+                                            * §8.4 found a lie drifting slower than
+                                            * CTRL_VSUP_STEP_FRAC/tick walks the clamp
+                                            * loose (rotor at 1.8x rated). The floor —
+                                            * PROFILE_SPEC §1's v_limp hard minimum, no
+                                            * charging bus sits below it — bounds ANY
+                                            * false-low's rotor exposure to
+                                            * rotor_v x V_true/(3.2 x cells) ≈ 1.13x
+                                            * rated worst-case on this install.
+                                            * [SPEC-SIGNOFF] */
 #define CTRL_VSUP_STEP_FRAC        0.04f   /* reading > 4 % below track → distrust */
 #define CTRL_VSUP_DISTRUST_MAX_MS  300000u /* sustained low level re-anchors after 5 min
                                             * (WARN telemetered the whole time) */
