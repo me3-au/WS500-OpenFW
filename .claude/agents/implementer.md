@@ -20,6 +20,10 @@ Ground rules:
 - The pure control core in `control/` stays HAL-free. Hardware access lives in
   `Core/`. Keep that boundary absolute.
 - Match existing code style, naming (`ctrl_*` vocabulary), and comment density.
+- Follow CONTRIBUTING.md's "Documentation standard" (binding): why-comments at the
+  decision site, SPDX + file-header block in every file, doc comments on every
+  public prototype, house markers ([SPEC-SIGNOFF], TODO(GH#n), bench-pending).
+  Run `python scripts/docs_lint.py` before reporting done; it must pass.
 - Every change ships with tests where a native test target exists (control/test/,
   sim/ scenarios). Run the native tests before reporting done; report actual results.
 - You do NOT commit. Leave changes in the working tree and report what you changed,

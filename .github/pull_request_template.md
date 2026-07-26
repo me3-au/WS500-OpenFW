@@ -17,6 +17,10 @@
       `PROFILE_SPEC_LFP.md`), or N/A.
 - [ ] **Hardware facts carry provenance** (disassembly / bench / VSR reference /
       datasheet), or N/A.
+- [ ] **Documentation is inline and self-explanatory** per the CONTRIBUTING
+      "Documentation standard": why-comments at the decision site, doc comments on
+      new public prototypes, house markers used (`[SPEC-SIGNOFF]`, `TODO(GH#n)`, …);
+      `scripts/docs_lint.py` passes (CI enforces).
 
 # Safety-critical justification (if applicable)
 

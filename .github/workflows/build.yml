@@ -10,6 +10,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Mechanical floor for the documentation standard (CONTRIBUTING.md):
+      # SPDX + file-header presence, doc comments on public header prototypes.
+      - name: Documentation lint
+        run: python3 scripts/docs_lint.py
+
       - name: Build & run control-core unit tests (native gcc)
         run: |
           gcc -std=c11 -Wall -Wextra -I control/Inc \

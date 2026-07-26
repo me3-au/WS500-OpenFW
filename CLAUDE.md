@@ -18,6 +18,11 @@ verified hardware facts (§0.6 V1–V8), and safety rules (§5).
   are authoritative; legacy patterns are not carried forward.
 - Hardware facts follow the evidence precedence in §0.6: bench > stock binary >
   upstream STM32 prototype > AVR source. Cite provenance when adding facts.
+- **Documentation standard (CONTRIBUTING.md) is binding**: docs live inline-first
+  (why-comments at the decision site → file header → public-header doc comments →
+  docs/ only for cross-module material); use the house markers (`[SPEC-SIGNOFF]`,
+  `[SPEC-GAP]`, `EXPECTED-GAP`, `bench-pending`, `TODO(GH#n)`). CI runs
+  `scripts/docs_lint.py` as the mechanical floor — run it before committing.
 
 ## Build & test
 

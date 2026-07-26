@@ -71,6 +71,40 @@ CI (`.github/workflows/build.yml`) runs both jobs on every push and PR. Both mus
 - The authoritative behavior specs are `docs/CONTROL_SPEC_NEXTGEN.md` and
   `docs/PROFILE_SPEC_LFP.md`. If you change behavior, change the spec in the same PR.
 
+## Documentation standard — inline first, self-explanatory, enforced
+
+This is an open-source firmware for a safety-relevant device: a reader with no
+access to the authors must be able to trust and modify the code. Documentation
+lives **as close to the thing it describes as possible**, in this order:
+
+1. **In the code line** — a comment stating a constraint the code cannot show
+   (why, not what). If a value or decision needs a paragraph, the paragraph
+   goes right there, not in a wiki.
+2. **In the file header** — every `.c`/`.h` opens with a comment block: what
+   the module is, the spec section it implements, and its boundary rules
+   (e.g. "PURE — no HAL"). Plus the `SPDX-License-Identifier: MIT` line.
+3. **In the public header** — every public function/type carries a doc comment
+   at its prototype: contract, units, failure behavior. Header comments are
+   the API reference; there is no separate one.
+4. **In `docs/`** — only what genuinely spans modules (specs, decisions,
+   plans). Every `docs/*.md` is registered in the PROJECT_PLAN §0 doc map.
+
+House idioms — use these exact markers so they stay greppable:
+
+| Marker | Meaning |
+|---|---|
+| `(PROJECT_PLAN §0.6 Vn)` / spec § cites | **Provenance** — every hardware fact and behavior rule cites its source |
+| `[SPEC-SIGNOFF]` | an engineering-chosen constant awaiting spec review |
+| `[SPEC-GAP]` | code enforces only sanity because the spec gives no range |
+| `EXPECTED-GAP` (tests) | a characterized, review-gated known defect; the test asserts it still exists, so fixing the code forces the marker's removal |
+| `BUS CAVEAT` / `bench-pending` | fact believed from RE/derivation, awaiting bench confirmation |
+| `TODO(GH#n):` | deferred work — must reference an issue (or `M<n>`/`bench`) |
+
+Mechanical floor: `scripts/docs_lint.py` runs in CI and fails the build if a
+source file is missing its SPDX line or file-header block, or a public header
+prototype has no doc comment. The lint is the floor, not the standard —
+reviewers still judge whether comments explain *why*.
+
 ## Pull requests
 
 - One logical change per PR.

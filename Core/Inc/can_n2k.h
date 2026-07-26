@@ -10,7 +10,13 @@
 #include "control.h"
 #include "telemetry.h"
 
+/* Bring up bxCAN (250 kbit/s N2K rate) + the NMEA2000 stack; safe to call with
+ * no bus attached — errors surface via the driver error budget (§7 R6), never
+ * a blocking wait. */
 void can_n2k_init(void);
+
+/* Service the CAN stack from the 10 ms main loop: Tx queue drain, Rx dispatch,
+ * bus-off auto-recovery bookkeeping. Non-blocking. */
 void can_n2k_poll(void);
 
 /* Broadcast the telemetry snapshot as NMEA2000 PGNs (RV-C encoder added later). */
