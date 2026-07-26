@@ -1,7 +1,11 @@
 # Decision #6a — Config strategy: stock `$`-protocol vs native JSON schema
 
-**Status: PROPOSED (awaiting owner decision)** · GH#28 · gates M4 (config store,
-client app) and parts of M3. Drafted 2026-07-26.
+**Status: ACCEPTED — Option B (clean break), decided by the project owner
+2026-07-26.** Clarification recorded with the decision: **the client app owns
+stock-dump translation** — it parses an archived stock `$` config dump *file*
+and proposes equivalent native settings (human-reviewed); the firmware itself
+never speaks or stores `$`-protocol config. · GH#28 · was gating M4 (config
+store, client app) and parts of M3. Drafted 2026-07-26.
 
 ## Question
 
@@ -72,4 +76,8 @@ Two compatibility courtesies, both cheap and non-binding:
 
 ## Decision
 
-*(to be filled by project owner: A / B / C, date)*
+**B — clean break. Decided 2026-07-26 by the project owner.** The stock-dump
+import/translation is a client-app feature ("the app translates the file"),
+not firmware surface. Consequences above are now active work: packed-record
+EEPROM codec + validator first, JSON boundary + client import tool with the
+M4 client work.

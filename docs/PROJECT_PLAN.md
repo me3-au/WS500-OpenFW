@@ -46,7 +46,7 @@ constrain the code.
 | `CAN_INTEGRATION.md` | CAN/NMEA2000 integration (Tx telemetry, Rx BMS/DVCC/engine, sync) | 🔨 draft |
 | `OPEN_SOURCE.md` | Project overview, architecture, provenance, build/test, contributing | 🔨 draft |
 | `TEST_PLAN.md` | see deliverable #13 | ✅ assembled from §8/§1/§2 (2026-07-26) |
-| `DECISION_6A_CONFIG_STRATEGY.md` | Decision #6a ADR (config strategy) | 🧩 PROPOSED — recommends clean-break JSON; awaiting owner pick |
+| `DECISION_6A_CONFIG_STRATEGY.md` | Decision #6a ADR (config strategy) | ✅ **ACCEPTED: B — clean break** (owner, 2026-07-26); app translates stock dumps |
 
 > The old plan named a single `SOFTWARE_DESIGN_SPEC.md` that was never written; that role is
 > filled by `CONTROL_SPEC_NEXTGEN.md` + `PROFILE_SPEC_LFP.md`. Remaining design gaps to fold
@@ -229,8 +229,8 @@ settles most of them):
 | 3 | HW documentation | `WS500_HARDWARE_SPEC.md`, `IO_COVERAGE.md` | M0–M2 | ✅ (open items) |
 | 4 | Control/design spec | `CONTROL_SPEC_NEXTGEN.md` + `PROFILE_SPEC_LFP.md` (+ fault codes, loop numerics); **cross-referenced against the GPL VSR source (§0.5)** | M2.5–M3 | 🔨 |
 | 5 | OS firmware | `Core/` (board/field/main real; sensors/ina/config/can stub) + pure `control/` core | M2–M3 | 🔨 |
-| 6 | Config protocol + store | `config_protocol.c` + flash-page store | M4 | 🔨 / 🧩 (see #6a) |
-| 6a | **Config strategy decision** | stock `$`-compatible vs new JSON profile schema (they conflict) | M2/M3 | 🧩 |
+| 6 | Config protocol + store | `config_protocol.c` + **24C16 EEPROM packed-record store** (per #6a-B + V7) | M4 | 🔨 |
+| 6a | **Config strategy decision** | **DECIDED: B — clean break to the PROFILE_SPEC §7 JSON schema**; packed binary+CRC in EEPROM; stock-dump translation lives in the client app | M2/M3 | ✅ (2026-07-26) |
 | 7 | Update/rollback/backup/recovery | `FLASH_AND_RECOVERY.md` (+ §3) | M1 | ⬜ |
 | 8 | Client app | **WebSerial/WebUSB web app** (PC/Mac/Android: program+monitor+firmware, one codebase) + native `tools/ws500ctl/` CLI (scripting/CI/flash). iOS = monitor via CAN/VRM only. See `CLIENT_CONNECTIVITY.md` | M4 | ⬜ |
 | 9 | **CAN Tx telemetry (NMEA2000 → Cerbo)** | broadcast the dialect-neutral snapshot as N2K PGNs; **near-term / low-risk** (read-only) | **M3** | 🔨 snapshot done |
@@ -277,7 +277,8 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
   (spec-native `ctrl_*` vocabulary, two-stage CHARGE/REST, per-cell V, watts arbitration).
   Built + CI-tested: `control` engine, `arbitration`, `field` (rotor clamp), `limits`,
   `faults` (OPEN/LIMP ladder), `thermal` governor — all unit-tested on the native CI runner;
-  wired end-to-end in the app. **Remaining:** decision **#6a config strategy** (still 🧩).
+  wired end-to-end in the app. #6a config strategy **decided 2026-07-26 (B — clean
+  break; see the ADR)** — **M2.5 fully complete.**
 - **M3 — Core firmware.** 🔨 *in progress.* **Done (pure/CI-tested):** two-stage engine +
   profile 1, arbitration, CV/field loop, rotor clamp, thermal governor, fault ladder,
   hardware limit set. **Driver trio added 2026-07-26**: `stator_rpm.c` (PA10 EXTI +
