@@ -101,6 +101,26 @@ it):
 renode -e "$bin=@'../New folder/fw_0x08000000.bin'; include @renode/ws500-stock-trace.resc"
 ```
 
+**V6 was run and resolved 2026-07-26** (PROJECT_PLAN §0.6 V6 has the findings:
+TIM1 143.2 Hz config, TIM7 tick, ADC DMA scan, and the I²C1→I²C2 rebind with
+INA226 @0x40 + 24C16 EEPROM 0xA0-family traffic all observed live). Practical
+notes from that run — the *stock* image, unlike ours, hard-checks HAL return
+codes, so the bare platform is not enough:
+
+- **`renode/v6-stubs/`** holds three PythonPeripheral stubs that were required:
+  `rcc_v6.py` (RCC store-and-return with HSERDY/PLLRDY/SWS/HSI14/HSI48 ready-bit
+  mirroring — the stock RCC model never raises HSERDY for the HSE+PLL path),
+  `ramreg.py` (FLASH interface @0x40022000 so ACR latency readback matches), and
+  `adc_v6.py` (ADC @0x40012400 with ADCAL/ADEN/ADRDY handshakes). Register them
+  after `sysbus Unregister sysbus.rcc` / `sysbus.adc` via
+  `machine LoadPlatformDescriptionFromString`.
+- **Renode 1.16.1's PythonPeripheral request API is PascalCase**
+  (`request.IsRead/IsWrite/Offset/Value`); the lowercase names in older docs
+  throw.
+- The stock firmware polls `uwTick` (0x200001EC) with PRIMASK set before the
+  scheduler starts; under emulation the tick can starve. Workaround: stepped
+  `emulation RunFor` interleaved with monitor writes advancing 0x200001EC.
+
 ## CI wiring
 
 `.github/workflows/build.yml` gets a new **`emulation`** job that `needs:
