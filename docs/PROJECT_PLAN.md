@@ -37,15 +37,16 @@ constrain the code.
 | `IO_COVERAGE.md` | Per-pin I/O completeness map | ✅ |
 | `CONTROL_SPEC_NEXTGEN.md` | **Authoritative** control architecture (2-stage LFP, watts arbitration) | 🔨 Draft B |
 | `PROFILE_SPEC_LFP.md` | Charge-profile engine: state machine, params, JSON schema | 🔨 Draft 1 (8 open Qs §8) |
-| `FLASH_AND_RECOVERY.md` | Backup/rollback/update procedures | ⬜ (constraints in §3 here, to extract) |
-| `SAFETY.md` | Bench-safety rules | ⬜ (rules in §5 here, to extract) |
-| `test-fw/README.md` | Bring-up test firmware spec | ⬜ (spec in §4 here, to extract) |
+| `FLASH_AND_RECOVERY.md` | Backup/rollback/update procedures | ✅ extracted from §6 (2026-07-26); M1 rehearsal pending |
+| `SAFETY.md` | Bench-safety rules | ✅ extracted from §5 (2026-07-26) |
+| `test-fw/README.md` | Bring-up test firmware spec | ✅ extracted from §4 (2026-07-26, BKIN + 0x0C/0x10/0x4C items corrected per V1–V3/V7); firmware itself ⬜ |
 | `CLIENT_CONNECTIVITY.md` | Programming/firmware/monitoring across PC/Mac/iOS/Android over USB+CAN (decision) | ✅ |
 | `QUICK_START.md` | Get-going guide (flash, connect, pick profile, run) | 🔨 draft |
 | `USER_MANUAL.md` | User manual + algorithm explanation (how the regulator decides) | 🔨 draft |
 | `CAN_INTEGRATION.md` | CAN/NMEA2000 integration (Tx telemetry, Rx BMS/DVCC/engine, sync) | 🔨 draft |
 | `OPEN_SOURCE.md` | Project overview, architecture, provenance, build/test, contributing | 🔨 draft |
-| `TEST_PLAN.md` | see deliverable #13 | ⬜ |
+| `TEST_PLAN.md` | see deliverable #13 | ✅ assembled from §8/§1/§2 (2026-07-26) |
+| `DECISION_6A_CONFIG_STRATEGY.md` | Decision #6a ADR (config strategy) | 🧩 PROPOSED — recommends clean-break JSON; awaiting owner pick |
 
 > The old plan named a single `SOFTWARE_DESIGN_SPEC.md` that was never written; that role is
 > filled by `CONTROL_SPEC_NEXTGEN.md` + `PROFILE_SPEC_LFP.md`. Remaining design gaps to fold
