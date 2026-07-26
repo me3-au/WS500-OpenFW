@@ -20,7 +20,11 @@
 //   Tags:    IWDG, USB, CRS, PWR, SYSCFGCOMP, DBGMCU ... (silent, loggable)
 //
 // The stock stm32f072.repl also fixes flash=128KB@0x08000000 and sram=16KB
-// @0x20000000, matching STM32F072xB_FLASH.ld (_estack = 0x20004000) exactly.
+// @0x20000000, matching STM32F072xB_FLASH.ld exactly. (Note the linker script's
+// _estack is NOT the top of SRAM: PROJECT_PLAN §7 R4 moved the stack to the
+// BOTTOM of RAM so an overflow faults into unmapped space instead of eating
+// .bss, so _estack = 0x20000000 + _Min_Stack_Size. Nothing in the platform
+// depends on its value — the reset vector supplies it.)
 //
 // `using` targets are resolved against Renode's install directory (default
 // Monitor PATH), so this reference works for both `renode` and `renode-test`.
@@ -39,6 +43,32 @@ using "platforms/cpus/stm32f072.repl"
 // .repl/.resc; if CI shows a hang here, the fallback is a small custom RCC
 // register-init model (documented in the README), not a sysbus write.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// KNOWN GAP — no BOOT0 flash mirror at 0x00000000.
+//
+// The stock stm32f072.repl registers `flash` at 0x08000000 only. Real hardware
+// with BOOT0=0 also mirrors it at 0x00000000, and on a Cortex-M0 (no VTOR)
+// that mirror is where the CPU fetches the initial SP/PC after EVERY reset —
+// including the software reset our §7 R3 fault path performs. Verified against
+// Renode 1.16.1: without the mirror the CPU halts with "PC does not lay in
+// memory" the moment SYSRESETREQ lands.
+//
+// It is NOT added here, deliberately: changing the shared platform would touch
+// the existing CI liveness test as well. The fault test in ws500.robot
+// installs it per-machine instead (`sysbus Unregister sysbus.flash` + a
+// re-registration at both addresses). Fold it in here if a second consumer
+// ever needs it.
+//
+// Note `sysbus Redirect 0x0 0x08000000 0x20000` is NOT a substitute: the
+// redirected region serves data reads but cannot be executed from, so vector
+// fetches through it return 0.
+// ---------------------------------------------------------------------------
+
+// KNOWN GAP — IWDG is a silent Tag region (see the Tag list above), so the
+// §7 R1 watchdog cannot be exercised here: key-register writes are logged and
+// discarded, and no reset is ever generated. What that costs, and what covers
+// it instead, is written up in renode/README.md.
 
 // No INA226 model exists in Renode. The firmware's ina2xx.c uses HAL_I2C_Mem_*
 // with a fixed 5 ms per-transaction timeout ("never an unbounded wait/loop"),

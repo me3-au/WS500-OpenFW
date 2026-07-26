@@ -97,5 +97,8 @@ jobs:
             python3 -m pip install -r "$HOME/renode/tests/requirements.txt"
           fi
 
-      - name: Renode whole-firmware liveness test (PROJECT_PLAN §8.2)
+      # Runs every case in the file: whole-firmware liveness (§8.2) and the
+      # §7 R3 fault path — induced fault -> safe state -> crash record ->
+      # clean reboot (the M3 exit criterion). See renode/README.md.
+      - name: Renode whole-firmware tests (PROJECT_PLAN §8.2, §7 R3)
         run: renode-test renode/ws500.robot

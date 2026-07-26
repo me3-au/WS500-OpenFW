@@ -7,6 +7,7 @@
 #ifndef WS500_CAN_N2K_H
 #define WS500_CAN_N2K_H
 
+#include <stdint.h>
 #include "control.h"
 #include "telemetry.h"
 
@@ -21,5 +22,22 @@ void can_n2k_poll(void);
 
 /* Broadcast the telemetry snapshot as NMEA2000 PGNs (RV-C encoder added later). */
 void can_n2k_publish(const ctrl_telemetry_t *t);
+
+/*
+ * Report a bxCAN bus-off condition (§7 R6 "CAN bus-off: auto-recovery +
+ * counter"). Called by the CAN driver when it observes ESR.BOFF — bxCAN
+ * recovers on its own after 128×11 recessive bits, so the firmware's job is
+ * to COUNT it, not to fix it: a link that keeps going bus-off is a wiring or
+ * termination fault, and after the §7 R6 budget is exhausted it latches a
+ * fault the control core treats as a lost external source.
+ *
+ * Exposed as a hook rather than called internally because bxCAN itself is not
+ * up yet — TODO(GH#27): call this from the bus-off detection path when the CAN
+ * driver lands, and delete this note.
+ */
+void can_n2k_note_bus_off(void);
+
+/* Bus-off events counted since boot (telemetry/diagnostics). */
+uint32_t can_n2k_bus_off_count(void);
 
 #endif /* WS500_CAN_N2K_H */

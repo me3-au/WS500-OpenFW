@@ -26,6 +26,18 @@ sysbus LoadELF $elf
 # --- Optional instrumentation (commented; enable interactively as needed) ---
 # Log every entry into the 10 ms control loop and the fatal handler:
 #   sysbus.cpu LogFunctionNames true "ctrl_tick Error_Handler"
+# ...or the PROJECT_PLAN §7 R3 fault path (what renode/ws500.robot watches):
+#   sysbus.cpu LogFunctionNames true "ctrl_tick enter_safe_state fault_nmi_stage2 fault_hardfault_stage2 Error_Handler"
+#
+# --- Reproducing the fault test by hand -------------------------------------
+# The §7 R3 path ends in NVIC_SystemReset(), and a Cortex-M0 re-fetches SP/PC
+# from address 0 — which the stock platform does not map. Add the BOOT0=0 flash
+# mirror BEFORE LoadELF above, exactly as ws500.robot does, or the CPU halts
+# instead of rebooting:
+#   sysbus Unregister sysbus.flash
+#   machine LoadPlatformDescriptionFromString "flash: Memory.MappedMemory @ { sysbus 0x08000000; sysbus 0x00000000 } { size: 0x20000 }"
+# Then, with the machine running, inject a fault by pending NMI:
+#   pause; sysbus WriteDoubleWord 0xE000ED04 0x80000000; start
 # Watch the field-PWM timer and ADC being configured:
 #   sysbus LogPeripheralAccess sysbus.timer1 true
 #   sysbus LogPeripheralAccess sysbus.adc true

@@ -13,6 +13,7 @@
  */
 #include "eeprom24c16.h"
 #include "board.h"
+#include "err_budget.h"
 
 /* I2C2 kernel clock is PCLK1 — unlike I2C1, the F0's RCC_CFGR3 has no I2C2SW
  * mux bit (confirmed absent in the CMSIS register header; only I2C1SW exists),
@@ -43,6 +44,30 @@
 static I2C_HandleTypeDef s_i2c2;
 static uint32_t s_fail_total;
 static uint32_t s_fail_consec;
+static bool     s_reinit_busy;   /* re-entry guard, see eeprom_bus_reinit() */
+
+static bool eeprom_i2c_bring_up(void);
+
+/*
+ * §7 R6 middle rung for this bus: a failed transaction budget that escalates
+ * retry -> bus re-init -> latched fault. The EEPROM is the config store, so
+ * unlike the INA226 its failure does not directly endanger charging (the
+ * config is already resident in RAM); the escalation exists so a dead store
+ * shows up as a fault instead of as writes that silently do nothing.
+ */
+static void eeprom_bus_reinit(void)
+{
+    if (s_reinit_busy) return;
+    s_reinit_busy = true;
+    HAL_I2C_DeInit(&s_i2c2);
+    (void)eeprom_i2c_bring_up();
+    s_reinit_busy = false;
+}
+
+static void eeprom_note_failure(void)
+{
+    if (errb_fail(ERRB_EEPROM) == ERRB_ACTION_REINIT) eeprom_bus_reinit();
+}
 
 /* 8-bit device address, computed per access — block-select bits folded into
  * the 0xA0 family nibble (§0.6 V7). Already in the HAL's "pre-shifted" 8-bit
@@ -59,15 +84,10 @@ static void wp_write_enable(bool enable)
                        enable ? GPIO_PIN_RESET : GPIO_PIN_SET);
 }
 
-bool eeprom24c16_init(void)
+/* I²C peripheral bring-up, factored out so the §7 R6 re-init rung reuses
+ * exactly the same configuration as the initial one. */
+static bool eeprom_i2c_bring_up(void)
 {
-    s_fail_total  = 0;
-    s_fail_consec = 0;
-
-    /* /WP GPIO mode itself is configured (and defaulted HIGH/protected) in
-     * board_init(); re-assert protected here defensively. */
-    wp_write_enable(false);
-
     __HAL_RCC_I2C2_CLK_ENABLE();
     s_i2c2.Instance              = I2C2;
     s_i2c2.Init.Timing           = EEPROM_I2C2_TIMING;
@@ -81,6 +101,18 @@ bool eeprom24c16_init(void)
     return HAL_I2C_Init(&s_i2c2) == HAL_OK;
 }
 
+bool eeprom24c16_init(void)
+{
+    s_fail_total  = 0;
+    s_fail_consec = 0;
+
+    /* /WP GPIO mode itself is configured (and defaulted HIGH/protected) in
+     * board_init(); re-assert protected here defensively. */
+    wp_write_enable(false);
+
+    return eeprom_i2c_bring_up();
+}
+
 static bool eeprom_read_chunk(uint16_t addr, uint8_t *buf, uint16_t len)
 {
     for (uint32_t attempt = 0; attempt < EEPROM_XACT_ATTEMPTS; attempt++) {
@@ -88,11 +120,13 @@ static bool eeprom_read_chunk(uint16_t addr, uint8_t *buf, uint16_t len)
                               I2C_MEMADD_SIZE_8BIT, buf, len,
                               EEPROM_XACT_TIMEOUT_MS) == HAL_OK) {
             s_fail_consec = 0;
+            errb_ok(ERRB_EEPROM);
             return true;
         }
         s_fail_total++;
         s_fail_consec++;
     }
+    eeprom_note_failure();
     return false;
 }
 
@@ -126,12 +160,14 @@ static bool eeprom_write_page(uint16_t addr, const uint8_t *buf, uint16_t len)
                                I2C_MEMADD_SIZE_8BIT, (uint8_t *)buf, len,
                                EEPROM_XACT_TIMEOUT_MS) == HAL_OK) {
             s_fail_consec = 0;
+            errb_ok(ERRB_EEPROM);
             HAL_Delay(EEPROM_WRITE_CYCLE_MS);   /* write-cycle wait, §0.6 V7 */
             return true;
         }
         s_fail_total++;
         s_fail_consec++;
     }
+    eeprom_note_failure();
     return false;
 }
 

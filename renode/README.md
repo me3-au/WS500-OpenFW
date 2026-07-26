@@ -9,22 +9,23 @@ SIL gauntlet) exercises the *pure control core* against a plant model, §8.2
 proves the *whole firmware image* survives its own bring-up and keeps its 10 ms
 control loop turning on the actual target peripherals.
 
-> ### Status: authored and CI-validated, **not yet locally run**
-> Neither Renode nor an ARM toolchain is installed on the authoring machine, so
-> these files were written against the **current** Renode platform library,
-> Robot keyword set, and CI tooling (v1.16.1), but have **not** been executed
-> locally. **The first CI run is the real test.** The harness is *expected* to
-> work; the concrete things that run will confirm or expose are in
-> [Bring-up risks](#bring-up-risks-the-first-ci-run-settles-these) below. Do not
-> read a green checkmark here — read the CI log.
+> ### Status: liveness case CI-green; fault case authored against a probed emulator
+> The liveness test has been green in CI since 2026-07-26. The fault-path case
+> (added 2026-07-27 with issue #27) was written against **Renode 1.16.1 run
+> locally** — the two emulator behaviours it depends on were probed directly
+> with a hand-built flash image (see [Fault-path test](#fault-path-test-project_plan-7-r3--issue-27--m3-exit-criterion)),
+> and the Robot file parses under the same `TestSuiteBuilder` renode-test uses.
+> What is still unproven locally is the firmware side: there is no ARM
+> toolchain on the authoring machine, so the ELF the test loads has never been
+> built here. **The first CI run is the real test of the fault case.**
 
 ## Files
 
 | File | Role |
 |------|------|
-| `ws500f072.repl` | Platform. Thin overlay on Renode's stock `platforms/cpus/stm32f072.repl` (128 KB flash @ `0x08000000`, 16 KB SRAM @ `0x20000000`, `_estack = 0x20004000` — matches the linker script). Documents the HSI48 gap. |
+| `ws500f072.repl` | Platform. Thin overlay on Renode's stock `platforms/cpus/stm32f072.repl` (128 KB flash @ `0x08000000`, 16 KB SRAM @ `0x20000000` — matches the linker script). Documents the HSI48, BOOT0-mirror and IWDG gaps. |
 | `ws500-openfw.resc` | Interactive boot script: create machine, load platform, `LoadELF`, `start`. Parameterised by `$elf` (default `build/ws500-openfw.elf`). |
-| `ws500.robot` | The CI liveness test (Robot Framework). |
+| `ws500.robot` | The CI tests (Robot Framework): whole-firmware liveness, and the §7 R3 fault-path case described below. |
 | `ws500-stock-trace.resc` | **Diagnostic, not CI.** Boots the *stock* binary and logs RCC/TIM1/ADC/I2C bus traffic for PROJECT_PLAN §0.6 **V6**. |
 
 ## Renode models used
@@ -73,6 +74,70 @@ That emits `Entering function ctrl_tick at 0x...` on every entry. The Robot test
 
 Emulated time advances automatically while the CPU runs (SysTick is core, driven
 by the platform clock), so `HAL_GetTick` / the 10 ms gate progress on their own.
+
+## Fault-path test (PROJECT_PLAN §7 R3 · issue #27 · M3 exit criterion)
+
+The second Robot case, **`Induced Fault Reaches Safe State And Reboots`**, is the
+emulated half of M3's exit criterion: *"induced fault provably lands in safe
+state + crash record + clean reboot"*. It boots the firmware, waits for control
+loop liveness, injects a fault, and then asserts, in order:
+
+| Assertion | What it proves |
+|---|---|
+| `Entering function fault_nmi_stage2` | the two-stage handler works: the **naked Thumb-1 stage-1** assembled correctly, decoded EXC_RETURN, re-pointed MSP and tail-called C |
+| `Entering function enter_safe_state` | the **§7 R0 funnel** ran — TIM1 `MOE=0`, CCR 0, field pins driven low |
+| `Resetting platform with SYSRESETREQ` | the firmware **rebooted rather than spun** (this line comes from Renode's NVIC model when AIRCR.SYSRESETREQ is written, so nothing else can produce it) |
+| `Entering function ctrl_tick` ×2, after the reset | the reboot **succeeded** and the 10 ms control loop is turning again |
+
+### Two platform facts this test needed, both established by probing Renode 1.16.1
+
+Neither was assumed; each was checked by running a hand-built flash image
+(vector table + a few Thumb opcodes poked in with `sysbus WriteDoubleWord`) on
+the real emulator before the test was written.
+
+1. **An undefined instruction does not produce a HardFault on the emulated
+   Cortex-M0.** Renode dispatches it to **UsageFault (exception 6)**, which does
+   not exist on ARMv6-M. Vector slot 0x18 is a reserved zero in the ST startup
+   table, so the emulated CPU ends up executing address 0 and wandering — the
+   firmware's HardFault handler is never reached. Setting `PC` to an unmapped
+   address is no better: Renode halts the CPU (*"Trying to execute code outside
+   RAM or ROM"*) without raising any exception at all.
+   **Therefore the injection is `SCB->ICSR.NMIPENDSET` (write `0x80000000` to
+   `0xE000ED04`)**, which the NVIC model implements exactly. NMI is a real §7 R3
+   vector (SRAM parity) and shares the entire path — stage-1 asm, C stage,
+   `enter_safe_state()`, crash record, `NVIC_SystemReset()` — with HardFault.
+   The only step not covered is the CPU's own HardFault *dispatch*, which is
+   silicon behaviour, not firmware behaviour.
+2. **A software reset needs the BOOT0 flash mirror at `0x00000000`.** The
+   Cortex-M0 has no VTOR, so after any reset it fetches SP/PC from address 0.
+   The stock platform maps flash at `0x08000000` only, so `SYSRESETREQ` left the
+   CPU halted. The test therefore re-registers the flash memory at **both**
+   addresses before `LoadELF`, which is what the hardware does with BOOT0=0.
+   (`sysbus Redirect` is not a substitute — the redirected region serves data
+   reads but cannot be executed from, so vector fetches through it return 0.)
+   Confirmed in the same probe: RAM contents **survive** the emulated reset, so
+   the `.noinit` crash-record block behaves as it does on hardware.
+
+### What this test cannot prove
+
+- **The IWDG (§7 R1) is not emulated at all.** The platform maps IWDG as a
+  silent `Tag` region: key/prescaler/reload/window writes are logged and
+  discarded, `SR` reads back 0, and no reset is ever generated. So the harness
+  can confirm the watchdog code *runs* (and that its bounded `SR` waits do not
+  hang — which is a real risk on a stubbed peripheral), but it cannot confirm
+  that starving the checkpoints resets the part, nor that the window rejects an
+  early kick. Those need silicon: they are bench items for M3, and the
+  `renode/README.md` gap list is the record of that. A hand-written IWDG model
+  would be the alternative if starvation ever needs CI coverage.
+- **The CPU's HardFault dispatch** — see fact 1 above. `HardFault_Handler`'s
+  stage-1 body is byte-identical (same macro) to `NMI_Handler`'s, so what the
+  test does not exercise is the emulator's, not the firmware's.
+- **The PVD (§7 R5)**, because `PWR` is also a `Tag`: the threshold write goes
+  nowhere and no EXTI 16 event can be generated.
+- **The image CRC (§7 R4) is UNPATCHED in this environment by design.** The job
+  loads the `.elf`; `scripts/embed_crc.py` patches the `.bin`. `integrity.c`
+  reports `INTEGRITY_CRC_UNPATCHED` (a distinct, non-fatal status) rather than
+  a mismatch, which is exactly why the boot-time check is report-only.
 
 ## Running it
 
@@ -127,9 +192,10 @@ codes, so the bare platform is not enough:
 firmware`. It downloads the `ws500-openfw` artifact (the ELF the `firmware` job
 already builds and uploads) into `build/`, installs the pinned **Renode 1.16.1
 Linux portable** release (which ships `renode-test`), installs the Robot test
-Python deps, and runs `renode-test renode/ws500.robot`. The job passes **iff**
-the robot test passes. The existing `tests`, `sil`, and `firmware` jobs are
-untouched.
+Python deps, and runs `renode-test renode/ws500.robot` — which executes **every**
+case in that file, so adding the fault-path test needed no workflow change. The
+job passes **iff** all robot tests pass. The existing `tests`, `sil`, and
+`firmware` jobs are untouched.
 
 Why this shape rather than the alternatives:
 - **vs. `container: antmicro/renode:latest`** — a job-level container runs
