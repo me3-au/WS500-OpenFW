@@ -89,9 +89,10 @@ renode-test renode/ws500.robot
 ```
 
 Success prints `Tests finished successfully :)` and writes `robot_output.xml`,
-`log.html`, `report.html`. Both commands must be run from the **repo root** so
-`@build/ws500-openfw.elf` and `@renode/ws500f072.repl` resolve; the ELF must be
-built first (`cmake --build build`).
+`log.html`, `report.html`. The robot test anchors its paths to `${CURDIR}` (the
+`renode/` directory), so it runs from anywhere; the interactive `.resc` scripts
+still use repo-root-relative `@` paths, so run those from the **repo root**. The
+ELF must be built first (`cmake --build build`).
 
 Stock-firmware trace (V6 — supply your own out-of-tree image, do **not** commit
 it):

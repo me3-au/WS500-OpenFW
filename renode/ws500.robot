@@ -20,8 +20,10 @@
 #                   Should Not Be In Log guards the window after iteration.
 
 *** Variables ***
-${ELF}          @build/ws500-openfw.elf
-${PLATFORM}     @renode/ws500f072.repl
+# ${CURDIR}-anchored so resolution is independent of Renode's working directory
+# (renode-test does not run Renode from the repo root — first CI run proved it).
+${ELF}          @${CURDIR}${/}..${/}build${/}ws500-openfw.elf
+${PLATFORM}     @${CURDIR}${/}ws500f072.repl
 
 *** Keywords ***
 Create Machine
