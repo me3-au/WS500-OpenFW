@@ -59,6 +59,19 @@ Create Fault Machine
     Execute Command             machine LoadPlatformDescriptionFromString "flash: Memory.MappedMemory @ { sysbus 0x08000000; sysbus 0x00000000 } { size: 0x20000 }"
     Execute Command             sysbus LoadELF ${ELF}
     Execute Command             sysbus.cpu LogFunctionNames true "ctrl_tick enter_safe_state fault_nmi_stage2 fault_hardfault_stage2 Error_Handler"
+    # Capture the hook addresses NOW, while the symbol store exists — the
+    # SYSRESETREQ machine reset wipes it (which is also why LogFunctionNames
+    # dies at reset and cannot be re-armed; verified on Renode 1.16.1).
+    ${a}=    Execute Command    sysbus GetSymbolAddress "ctrl_tick"
+    ${a}=    Evaluate           $a.strip()
+    Set Test Variable    ${TICK_ADDR}    ${a}
+    # Error_Handler is deliberately NOT hooked: since the §7 rework nothing
+    # references it and --gc-sections removes it from the image entirely (no
+    # symbol to resolve). The meaningful post-reset failure mode is the fault
+    # path RE-firing — a crash loop — so that is what the failing guard hooks.
+    ${b}=    Execute Command    sysbus GetSymbolAddress "fault_hardfault_stage2"
+    ${b}=    Evaluate           $b.strip()
+    Set Test Variable    ${HF2_ADDR}    ${b}
 
 *** Test Cases ***
 Firmware Boots And Control Loop Iterates
@@ -120,9 +133,22 @@ Induced Fault Reaches Safe State And Reboots
     #    from Renode's NVIC model when AIRCR.SYSRESETREQ is written, so it can
     #    only appear as a result of our NVIC_SystemReset().
     Wait For Log Entry          Resetting platform with SYSRESETREQ    timeout=10
-    # 4. ...and came back: the control loop is alive again after the reboot.
-    #    (Wait For Log Entry consumes entries in order, so this is a ctrl_tick
-    #    entry that follows the reset, not a replay of the ones above.)
-    Wait For Log Entry          Entering function ctrl_tick    timeout=20
-    Wait For Log Entry          Entering function ctrl_tick    timeout=10
-    Should Not Be In Log        Entering function Error_Handler    timeout=1
+    # RE-ARM OBSERVABILITY, the hard-won way. The CPU reset that SYSRESETREQ
+    # triggers silently kills LogFunctionNames — verified on Renode 1.16.1: the
+    # post-reset log shows a full normal boot (clock config, per-tick INA
+    # polling) but zero "Entering function" lines, and re-issuing
+    # LogFunctionNames does NOT revive it. Address hooks DO work post-reset
+    # (probed on the failure snapshot: a ctrl_tick hook fired 25x in 100 ms of
+    # virtual time), so the post-reset assertions use AddHook on the ELF
+    # symbols instead. Race-safe: the reboot needs seconds of virtual time to
+    # reach ctrl_tick, planting the hooks takes milliseconds of wall clock.
+    Execute Command             pause
+    Execute Command             sysbus.cpu AddHook ${TICK_ADDR} "self.ErrorLog('POSTRESET ctrl_tick alive')"
+    Execute Command             sysbus.cpu AddHook ${HF2_ADDR} "self.ErrorLog('POSTRESET fault re-entered')"
+    Register Failing Log String    POSTRESET fault re-entered
+    Execute Command             start
+    # 4. ...and came back: the control loop is alive again after the reboot —
+    #    two hook firings = the loop is cycling, not a one-shot entry.
+    Wait For Log Entry          POSTRESET ctrl_tick alive    timeout=20
+    Wait For Log Entry          POSTRESET ctrl_tick alive    timeout=10
+    Should Not Be In Log        POSTRESET fault re-entered    timeout=1
