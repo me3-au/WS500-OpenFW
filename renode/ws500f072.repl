@@ -1,0 +1,47 @@
+// WS500-OpenFW — Renode platform description for the STM32F072RB target.
+// SPDX-License-Identifier: MIT
+//
+// Deliverable #19 / issue #25 / PROJECT_PLAN §8.2 (whole-firmware emulation).
+//
+// This is a thin overlay on Renode's stock STM32F072 CPU platform. That stock
+// file (platforms/cpus/stm32f072.repl, which itself pulls in stm32f0.repl)
+// already provides everything the WS500 firmware touches during init + loop:
+//
+//   rcc      Miscellaneous.STM32F0_RCC   @ 0x40021000   (see HSI48 note below)
+//   gpioA-F  GPIOPort.STM32_GPIOPort     @ 0x48000000..
+//   timer1   Timers.STM32_Timer          @ 0x40012C00   (field PWM, TIM1)
+//   timer2   Timers.STM32_Timer          @ 0x40000000   (free-running timebase)
+//   timer7   Timers.STM32_Timer          @ 0x40001400
+//   adc      Analog.STM32F0_ADC          @ 0x40012400   (+ DMA, dmaChannel 1)
+//   dma      DMA.STM32G0DMA              @ 0x40020000
+//   i2c1/2   I2C.STM32F7_I2C             @ 0x40005400 / 0x40005800 (INA226/EEPROM)
+//   can      CAN.STMCAN                  @ 0x40006400   (bxCAN, PB8/9)
+//   exti     IRQControllers.STM32F4_EXTI @ 0x40010400   (stator pulse PA10)
+//   Tags:    IWDG, USB, CRS, PWR, SYSCFGCOMP, DBGMCU ... (silent, loggable)
+//
+// The stock stm32f072.repl also fixes flash=128KB@0x08000000 and sram=16KB
+// @0x20000000, matching STM32F072xB_FLASH.ld (_estack = 0x20004000) exactly.
+//
+// `using` targets are resolved against Renode's install directory (default
+// Monitor PATH), so this reference works for both `renode` and `renode-test`.
+using "platforms/cpus/stm32f072.repl"
+
+// ---------------------------------------------------------------------------
+// KNOWN GAP — HSI48 (bring-up risk #1, see renode/README.md).
+//
+// The stock STM32F0_RCC models CR2 (offset 0x34) with only HSI14 (bits 0-1)
+// and marks bits 16..31 reserved, so HSI48ON is dropped and HSI48RDY (bit 17)
+// always reads 0. board_clock_config() ISSUES HAL_RCC_OscConfig / ClockConfig
+// but IGNORES their return codes, so the missing ready bit produces a bounded
+// ~2 ms HAL_TIMEOUT (gated on SysTick) rather than an infinite spin, and
+// execution continues on the reset HSI clock. This is the #1 thing the first
+// CI run confirms. There is no clean way to force a reserved bit high from the
+// .repl/.resc; if CI shows a hang here, the fallback is a small custom RCC
+// register-init model (documented in the README), not a sysbus write.
+// ---------------------------------------------------------------------------
+
+// No INA226 model exists in Renode. The firmware's ina2xx.c uses HAL_I2C_Mem_*
+// with a fixed 5 ms per-transaction timeout ("never an unbounded wait/loop"),
+// so an unpopulated I2C1 bus NACKs/times out without stalling the main loop.
+// To make sensor reads return real data once a model is available, attach it
+// in the .resc via LoadPlatformDescriptionFromString "... @ i2c1 0x40".

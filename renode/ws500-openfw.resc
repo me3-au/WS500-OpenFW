@@ -1,0 +1,40 @@
+:name: WS500-OpenFW whole-firmware emulation
+:description: Boots the WS500 open firmware on an emulated STM32F072RB (PROJECT_PLAN §8.2).
+
+# ---------------------------------------------------------------------------
+# Interactive use:   renode renode/ws500-openfw.resc
+#                    (then inspect with `sysbus.cpu PC`, `logLevel`, etc.)
+# Automated use:     renode-test renode/ws500.robot   (that .robot replicates
+#                    this setup so it can start emulation under a Log Tester).
+#
+# The firmware ELF path can be overridden before include, e.g.:
+#   renode -e "$elf=@/abs/path/ws500-openfw.elf; include @renode/ws500-openfw.resc"
+# ---------------------------------------------------------------------------
+
+# Default ELF location = CI/CMake build output, relative to the repo root.
+$elf?=@build/ws500-openfw.elf
+
+using sysbus
+
+mach create "ws500"
+machine LoadPlatformDescription @renode/ws500f072.repl
+
+# Debug/link build keeps the .symtab function symbols LoadELF needs for the
+# liveness hooks (main, ctrl_tick, board_init, field_drive_set, Error_Handler).
+sysbus LoadELF $elf
+
+# --- Optional instrumentation (commented; enable interactively as needed) ---
+# Log every entry into the 10 ms control loop and the fatal handler:
+#   sysbus.cpu LogFunctionNames true "ctrl_tick Error_Handler"
+# Watch the field-PWM timer and ADC being configured:
+#   sysbus LogPeripheralAccess sysbus.timer1 true
+#   sysbus LogPeripheralAccess sysbus.adc true
+
+# --- INA226 sensor stub ---
+# Renode ships no INA226 model; the firmware tolerates an absent device via a
+# 5 ms HAL I2C timeout. If/when a model is added, attach it here, e.g.:
+#   machine LoadPlatformDescriptionFromString "ina226: Sensors.<Model> @ i2c1 0x40"
+
+# Start emulation (interactive). renode-test does NOT include this file, so it
+# controls start timing itself; this line only affects the interactive path.
+start

@@ -56,3 +56,41 @@ jobs:
             build/ws500-openfw.elf
             build/ws500-openfw.bin
             build/ws500-openfw.map
+
+  # Whole-firmware emulation — boots ws500-openfw.elf on an emulated STM32F072RB
+  # in Renode and asserts the 10 ms control loop iterates (PROJECT_PLAN §8.2,
+  # issue #25). See renode/README.md. Runs on the host runner (Node available
+  # for checkout/artifacts) with the pinned portable Renode release, which ships
+  # renode-test. Does not touch the tests/sil/firmware jobs above.
+  emulation:
+    needs: firmware
+    runs-on: ubuntu-latest
+    env:
+      RENODE_VERSION: 1.16.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download firmware ELF (built by the firmware job)
+        uses: actions/download-artifact@v4
+        with:
+          name: ws500-openfw
+          path: build
+
+      - name: Install Renode (pinned portable release)
+        run: |
+          curl -fsSL -o renode.tar.gz \
+            "https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz"
+          mkdir -p "$HOME/renode"
+          tar xzf renode.tar.gz -C "$HOME/renode" --strip-components=1
+          echo "$HOME/renode" >> "$GITHUB_PATH"
+
+      - name: Install renode-test Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install robotframework
+          if [ -f "$HOME/renode/tests/requirements.txt" ]; then
+            python3 -m pip install -r "$HOME/renode/tests/requirements.txt"
+          fi
+
+      - name: Renode whole-firmware liveness test (PROJECT_PLAN §8.2)
+        run: renode-test renode/ws500.robot

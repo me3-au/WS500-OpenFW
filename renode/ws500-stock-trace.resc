@@ -1,0 +1,51 @@
+:name: WS500 stock-firmware peripheral trace
+:description: Boots the STOCK WS500 image and logs RCC/TIM1/ADC/I2C accesses (PROJECT_PLAN §0.6 V6).
+
+# ---------------------------------------------------------------------------
+# DIAGNOSTIC / BONUS script — NOT part of CI.
+#
+# Purpose: dynamic corroboration of the static binary RE (V1-V3, V7). Booting
+# the real stock image under Renode and logging peripheral bus traffic lets us
+# watch TIM1 (field PWM) configuration, the ADC scan setup, and I2C traffic to
+# 0x40 (INA226) / 0x50 (EEPROM) as they actually happen.
+#
+# The stock image is proprietary and is NOT committed to this repo. Either drop
+# a copy at the space-free default path below (build/fw_stock_0x08000000.bin) or
+# override $bin on the command line. Quote the path if it contains spaces (the
+# Monitor splits on whitespace), e.g.:
+#   renode -e "$bin=@'../New folder/fw_0x08000000.bin'; include @renode/ws500-stock-trace.resc"
+#
+# NOTE: the stock firmware may stall once it hits a peripheral behaviour Renode
+# doesn't model (most likely HSI48RDY in RCC — the stock code, unlike ours,
+# probably checks the HAL return). That's fine: the RCC/TIM1/ADC/I2C access log
+# captured up to that point is the artefact we want. This script traces, it
+# does not assert liveness.
+# ---------------------------------------------------------------------------
+
+# Space-free default drop location (see note above); override with $bin.
+$bin?=@build/fw_stock_0x08000000.bin
+
+using sysbus
+
+mach create "ws500-stock"
+machine LoadPlatformDescription @renode/ws500f072.repl
+
+# Raw binary (no ELF metadata): map it at the flash base...
+sysbus LoadBinary $bin 0x08000000
+# ...and boot Cortex-M from the vector table there (initial SP @ +0x0, PC @ +0x4).
+sysbus.cpu VectorTableOffset 0x08000000
+sysbus.cpu SP `sysbus ReadDoubleWord 0x08000000`
+sysbus.cpu PC `sysbus ReadDoubleWord 0x08000004`
+
+# Trace the peripherals that carry the V1-V3/V7 evidence.
+sysbus LogPeripheralAccess sysbus.rcc true
+sysbus LogPeripheralAccess sysbus.timer1 true
+sysbus LogPeripheralAccess sysbus.adc true
+sysbus LogPeripheralAccess sysbus.i2c1 true
+sysbus LogPeripheralAccess sysbus.i2c2 true
+
+# Make the access logs visible.
+logLevel 0
+
+# Run a bounded slice, then inspect the log / `sysbus.cpu PC`.
+start
