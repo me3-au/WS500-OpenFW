@@ -47,6 +47,7 @@ constrain the code.
 | `OPEN_SOURCE.md` | Project overview, architecture, provenance, build/test, contributing | 🔨 draft |
 | `TEST_PLAN.md` | see deliverable #13 | ✅ assembled from §8/§1/§2 (2026-07-26) |
 | `DECISION_6A_CONFIG_STRATEGY.md` | Decision #6a ADR (config strategy) | ✅ **ACCEPTED: B — clean break** (owner, 2026-07-26); app translates stock dumps |
+| `VERSIONING.md` | Client↔protocol↔config↔firmware compatibility standard (SemVer + schema_version + proto handshake + caps flags) | ✅ adopted 2026-07-26 |
 
 > The old plan named a single `SOFTWARE_DESIGN_SPEC.md` that was never written; that role is
 > filled by `CONTROL_SPEC_NEXTGEN.md` + `PROFILE_SPEC_LFP.md`. Remaining design gaps to fold
