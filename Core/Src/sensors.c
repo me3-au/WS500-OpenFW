@@ -24,11 +24,54 @@ static uint16_t s_avg[ADC_SCAN_LEN];
 #define VREFINT_CAL_ADDR  ((uint16_t*)0x1FFFF7BA)  /* @3.3V, 12-bit */
 #define VREFINT_CAL_VREF  3300.0f
 
+/*
+ * HAL_ADC_MspInit — ADC1 clock enable + DMA1 Channel1 bring-up/link, called by
+ * the HAL from inside HAL_ADC_Init() below. Owned here (not board.c) to match
+ * the pattern the other peripheral drivers already use for their own MSP
+ * hooks: usb_cdc.c defines HAL_PCD_MspInit, can_n2k.c defines HAL_CAN_MspInit
+ * — board.c only does GPIO/AF, each driver brings up its own clock+DMA.
+ *
+ * GAP FOUND while building test-fw (deliverable #14, PROJECT_PLAN §4/M2):
+ * this callback did not exist anywhere in the tree before this change. ADC1's
+ * and DMA1's clocks were never enabled, and hdma_adc1 above was declared but
+ * never configured or linked to hadc1 — so HAL_ADC_Start_DMA() below would
+ * have failed immediately (NULL DMA_Handle) on real hardware, and the ADC
+ * scan this whole module exists to run would never actually happen. The stale
+ * comment that used to sit on sensors_init() ("NOTE: HAL_ADC_MspInit (in
+ * board.c) must enable ADC1 + DMA1 clocks") already said this was owed; it
+ * had just never been written. Flagged for review since it changes shared
+ * code both firmware targets link.
+ *
+ * ADC1 is hard-wired to DMA1 Channel1 on the F0 family (RM0091 Table 28 — no
+ * DMAMUX on this part) — a silicon fact, not a board-specific one.
+ */
+void HAL_ADC_MspInit(ADC_HandleTypeDef *hadc)
+{
+    (void)hadc;
+    __HAL_RCC_ADC1_CLK_ENABLE();
+    __HAL_RCC_DMA1_CLK_ENABLE();
+
+    hdma_adc1.Instance                 = DMA1_Channel1;
+    hdma_adc1.Init.Direction           = DMA_PERIPH_TO_MEMORY;
+    hdma_adc1.Init.PeriphInc           = DMA_PINC_DISABLE;
+    hdma_adc1.Init.MemInc              = DMA_MINC_ENABLE;
+    hdma_adc1.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;  /* 12-bit
+                                        * right-aligned samples fit a half-word */
+    hdma_adc1.Init.MemDataAlignment    = DMA_MDATAALIGN_HALFWORD;
+    hdma_adc1.Init.Mode                = DMA_CIRCULAR;  /* matches
+                                        * ContinuousConvMode/DMAContinuousRequests
+                                        * below: the scan free-runs into s_dma */
+    hdma_adc1.Init.Priority            = DMA_PRIORITY_LOW;
+    HAL_DMA_Init(&hdma_adc1);
+
+    __HAL_LINKDMA(hadc, DMA_Handle, hdma_adc1);
+}
+
 void sensors_init(void)
 {
-    /* NOTE: HAL_ADC_MspInit (in board.c) must enable ADC1 + DMA1 clocks and set
-     * PA1/PA2/PA3/PC5 to analog. Configure IN1,IN2,IN3,IN15 + internal temp/
-     * vref/vbat channels here, scan ascending, DMA circular into s_dma. */
+    /* PA1/PA2/PA3/PC5 are already set to analog mode by board_init(); channel
+     * config (IN1/IN2/IN3/IN15 + internal temp/vref/vbat), scan direction and
+     * the DMA target buffer are configured below. */
     hadc1.Instance = ADC1;
     hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
     hadc1.Init.Resolution = ADC_RESOLUTION_12B;
@@ -50,7 +93,9 @@ void sensors_init(void)
         ch.Rank = ADC_RANK_CHANNEL_NUMBER;
         HAL_ADC_ConfigChannel(&hadc1, &ch);
     }
-    (void)hdma_adc1;  /* wired in board.c MspInit */
+    /* hdma_adc1 is configured and linked to hadc1 inside HAL_ADC_MspInit()
+     * above, called by HAL_ADC_Init() a few lines up — nothing left to wire
+     * here. */
     HAL_ADCEx_Calibration_Start(&hadc1);
     HAL_ADC_Start_DMA(&hadc1, (uint32_t*)s_dma, ADC_OVERSAMPLE * ADC_SCAN_LEN);
 
@@ -104,6 +149,7 @@ void sensors_read(sensor_readings_t *out)
      * NOT battery. Battery temp for temp-comp arrives via CAN/BMS (TODO: plumb
      * from can_n2k); report NAN until then so control treats it as absent. */
     out->alt_temp_c    = ntc_temp_c(SENSOR_CH_TEMP_A1,  SENSOR_NTC_BETA_ALT);
+    out->alt_temp2_c   = ntc_temp_c(SENSOR_CH_TEMP_A2,  SENSOR_NTC_BETA_ALT);
     out->driver_temp_c = ntc_temp_c(SENSOR_CH_TEMP_FET, SENSOR_NTC_BETA_FET);
     out->batt_temp_c   = NAN;   /* was PA3 — mislabeled; see §0.6 V8 */
 

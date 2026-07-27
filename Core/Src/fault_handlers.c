@@ -187,9 +187,29 @@ __attribute__((naked, used)) void ws500_unexpected_irq_entry(void)
 void SVC_Handler(void)    WS500_UNCLAIMED_IRQ;
 void PendSV_Handler(void) WS500_UNCLAIMED_IRQ;
 
+/* A funnel alias that YIELDS to a strong definition elsewhere. Used for
+ * vectors a driver claims in the main firmware but which no linked driver
+ * claims in the test-fw target (CMakeLists.txt builds two images from this
+ * file). A plain alias would collide with the driver's own handler; leaving
+ * the vector out entirely drops it to the startup file's Default_Handler,
+ * which is a bare `b .` — a §7 R3 violation ("never a bare while(1)": spinning
+ * with the field energised is the worst possible failure mode). Weak gives us
+ * both: the driver wins where it exists, the funnel covers the image where it
+ * doesn't. */
+#define WS500_UNCLAIMED_IRQ_WEAK \
+    __attribute__((weak, alias("ws500_unexpected_irq_entry"), used))
+
 /* Peripheral IRQs, in vector-table order. CLAIMED elsewhere and therefore
- * absent from this list: EXTI4_15 (stator_rpm.c), PVD_VDDIO2 (pvd.c),
- * SysTick (main.c). */
+ * absent from this list: EXTI4_15 (stator_rpm.c), SysTick (main.c).
+ *
+ * PVD_VDDIO2 is the one split case: pvd.c claims it in the main firmware, but
+ * test-fw does not link pvd.c, so it gets the WEAK funnel alias below —
+ * displaced by pvd.c's strong handler in ws500-openfw.elf, and covering the
+ * otherwise-bare-while(1) vector in ws500-testfw.elf. (Unreachable in test-fw
+ * either way — PWR_CR.PVDE is never set there — but §7 R3 is about not
+ * leaving the trap armed, not about whether we expect it to fire.) */
+void PVD_VDDIO2_IRQHandler(void)             WS500_UNCLAIMED_IRQ_WEAK;
+
 void WWDG_IRQHandler(void)                   WS500_UNCLAIMED_IRQ;
 void RTC_IRQHandler(void)                    WS500_UNCLAIMED_IRQ;
 void FLASH_IRQHandler(void)                  WS500_UNCLAIMED_IRQ;
