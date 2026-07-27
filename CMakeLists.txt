@@ -46,6 +46,8 @@ set(APP_SRC
     control/Src/telemetry.c
     control/Src/telemetry_json.c
     control/Src/n2k_encode.c
+    control/Src/n2k_addrclaim.c
+    control/Src/n2k_sched.c
     control/Src/config_codec.c
     control/Src/config_validate.c
     control/Src/config_store.c
