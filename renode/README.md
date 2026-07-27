@@ -35,9 +35,25 @@ touches; **no peripheral had to be hand-written**. Notable choices:
 
 - **RCC** — `Miscellaneous.STM32F0_RCC`. Mirrors `SWS←SW`, `HSERDY←HSEON`,
   `PLLRDY←PLLON`, `HSI14RDY←HSI14ON`. **Does not** implement HSI48 (see risks).
-- **ADC** — `Analog.STM32F0_ADC` (+ `DMA.STM32G0DMA`, channel 1). Writing `ADEN`
-  sets `ADRDY`; `ADCAL` is a tag that reads back 0, so
-  `HAL_ADCEx_Calibration_Start`'s wait exits immediately (no hang predicted).
+- **ADC** — `Analog.STM32F0_ADC`. Writing `ADEN` sets `ADRDY`; `ADCAL` is a tag
+  that reads back 0, so `HAL_ADCEx_Calibration_Start`'s wait exits immediately
+  (no hang predicted).
+- **DMA** — **not modelled.** This bullet previously claimed `DMA.STM32G0DMA`
+  channel 1; that was wrong, and the error survived because nothing had ever
+  exercised it. The stock `stm32f0.repl` models DMA1 as a
+  `Python.PythonPeripheral` whose write path calls `sysbus.WriteDoubleWord(...)`
+  — and `sysbus` is not bound inside a PythonPeripheral script, so **any** write
+  to a channel's `CPAR` (offset 0x10/0x24/0x38) raises "name 'sysbus' is not
+  defined" and kills the whole Renode process. `ws500f072.repl` overrides that
+  script with a discard-and-log stub; the reasoning, and why the fix is an
+  override rather than swapping in the real model, is written up at the
+  override site.
+  **Consequence:** the ADC scan buffer reads as zeros under emulation, so §0.6
+  V4 scaling stays bench-only (that is what test-fw's `adc` command is for).
+  *Found 2026-07-27:* the firmware had never actually configured DMA — the
+  missing `HAL_ADC_MspInit` meant `HAL_ADC_Start_DMA()` bailed out early — so
+  CI had been green over a code path it never executed. Fixing that real
+  hardware bug is what first drove a `CPAR` write onto the emulated bus.
 - **Timers** — `Timers.STM32_Timer` for TIM1 (field PWM) and TIM2/7 (timebase).
 - **I2C** — `I2C.STM32F7_I2C` ×2. No INA226/EEPROM device model exists in
   Renode; see the I2C-stub risk.

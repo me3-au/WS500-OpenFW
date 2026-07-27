@@ -65,6 +65,55 @@ using "platforms/cpus/stm32f072.repl"
 // fetches through it return 0.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// STOCK-PLATFORM BUG WORKAROUND — DMA1.
+//
+// Renode 1.16.1's platforms/cpus/stm32f0.repl models DMA1 as a
+// Python.PythonPeripheral whose write path is broken:
+//
+//     if request.IsWrite and request.Offset in (0x10, 0x24, 0x38):
+//         sysbus.WriteDoubleWord(request.Value, 0x40E33333)
+//
+// `sysbus` is not bound inside a PythonPeripheral script, so ANY write to a
+// channel's CPAR (peripheral-address) register raises "name 'sysbus' is not
+// defined" and takes the whole Renode process down — not a test failure, a
+// crash.
+//
+// Nothing hit it until 2026-07-27, because the firmware never actually
+// configured DMA: HAL_ADC_MspInit did not exist, so hdma_adc1 was never
+// initialised and HAL_ADC_Start_DMA() bailed out early. Fixing that real
+// hardware bug is what first drove a CPAR write onto the emulated bus — the
+// emulation had been silently green over a path it never executed.
+//
+// Fixed by overriding the offending script (a .repl overlay may re-set a
+// property of an existing entry, but may NOT redeclare the name with a
+// different type — swapping in the real DMA.STM32G0DMA model here fails to
+// load with "Variable 'DMA' was already declared", verified against Renode
+// 1.16.1 locally). The replacement drops the sysbus poke entirely and keeps
+// the peripheral a silent, loggable register sink.
+//
+// Dropping rather than repairing the write is deliberate: its purpose was to
+// force a nonzero value into the DMA's target buffer for firmwares that spin
+// waiting on output. This firmware does not — sensors.c polls a circular
+// buffer and is content with zeros — so "repairing" it would only scribble
+// 0x40E33333 into the middle of the ADC scan results and invent sensor
+// readings that never happened.
+//
+// Consequence, stated plainly: DMA remains UNMODELLED here, so the ADC scan
+// buffer reads as zeros under emulation and the §0.6 V4 scaling path is still
+// bench-only (test-fw's `adc` command, deliverable #14, is that step). What
+// this change buys is that the emulation no longer dies when the firmware
+// configures DMA correctly. If real DMA behaviour is ever wanted, the route
+// is a `sysbus Unregister sysbus.DMA` + re-registration in the .resc/.robot,
+// the same trick the fault test already uses for the BOOT0 flash mirror.
+// ---------------------------------------------------------------------------
+DMA:
+    script: '''
+if request.IsWrite:
+    self.NoisyLog("DMA write 0x%x at offset 0x%x (unmodelled, discarded)"
+                  % (request.Value, request.Offset))
+'''
+
 // KNOWN GAP — IWDG is a silent Tag region (see the Tag list above), so the
 // §7 R1 watchdog cannot be exercised here: key-register writes are logged and
 // discarded, and no reset is ever generated. What that costs, and what covers
