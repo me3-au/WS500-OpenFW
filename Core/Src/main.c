@@ -13,6 +13,11 @@
  *   - §7 R4: the stack high-watermark scan in housekeeping;
  *   - §7 R1/R6: translating driver-layer escalations into the control core's
  *     EXISTING ext_faults bits, so nothing in control/ has to change.
+ *   - deliverable #10 (CAN_INTEGRATION.md §1): pulling the BMS/DVCC snapshot
+ *     (can_n2k_bms_snapshot()) and feeding its ceiling/SOC/loss-of-signal
+ *     fields into the existing ctrl_ceilings_t.bms_ccl_w /
+ *     ctrl_measured_t.soc_* / ext_faults inputs — again, nothing in
+ *     control/ changes to accommodate it.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -50,7 +55,7 @@
  * Inventing a parallel safe-mode in the driver layer would give the regulator
  * two authorities on the same question.
  */
-static uint32_t app_ext_faults(void)
+static uint32_t app_ext_faults(bool bms_lost)
 {
     uint32_t f = 0u;
 
@@ -65,8 +70,18 @@ static uint32_t app_ext_faults(void)
     if (errb_faulted(ERRB_INA226)) f |= CTRL_FAULT_IMPLAUSIBLE_SHUNT;
 
     /* §7 R6: a CAN link that keeps going bus-off means BMS/DVCC ceilings stop
-     * arriving — the engine's LOST_BMS disposition (LIMP) is the right one. */
-    if (errb_faulted(ERRB_CAN)) f |= CTRL_FAULT_LOST_BMS;
+     * arriving — the engine's LOST_BMS disposition (LIMP) is the right one.
+     * deliverable #10 (CAN_INTEGRATION.md §1) adds a SECOND, finer-grained
+     * source for the same fault bit: `bms_lost` is bms_rx.c's own per-frame
+     * staleness detector (control/bms_rx.h) noticing the BMS ceiling/alarm
+     * frames specifically have gone stale, which can happen well before a
+     * bus-off event (a BMS that powers off or is unplugged doesn't take the
+     * whole bus down). Both are legitimately "the BMS stopped talking" from
+     * the engine's point of view, so OR'ing them into the one bit the fault
+     * ladder already understands is correct, not a loss of diagnostic
+     * information — can_n2k_bus_off_count() and the BMS snapshot itself
+     * remain available separately for telemetry/diagnosis. */
+    if (errb_faulted(ERRB_CAN) || bms_lost) f |= CTRL_FAULT_LOST_BMS;
 
     /* ERRB_EEPROM deliberately maps to NO control fault: the config it holds is
      * already resident in RAM, so a dead config store cannot make charging
@@ -146,6 +161,16 @@ int main(void)
             config_get(&g, &prof);
             watchdog_checkpoint(WDG_CP_SENSORS);
 
+            /* deliverable #10 (CAN_INTEGRATION.md §1): pull whatever the CAN
+             * driver has decoded from the CAN-BMS/REC/JK frames since the
+             * last tick. r.vbat_pack_v (NOT v_supply_v -- a different,
+             * ~12 V-class domain on this hardware) is the SAME pack-voltage
+             * reading the control core uses this cycle, per
+             * bms_rx_snapshot()'s own doc comment (control/bms_rx.h) on why
+             * that specific voltage and no other. */
+            bms_snapshot_t bms;
+            can_n2k_bms_snapshot(r.vbat_pack_v, &bms);
+
             /* RPM: stator_rpm_rpm() is NAN whenever poles/pulley_ratio aren't
              * configured yet (GH#28) OR the signal itself is lost/implausible
              * -- either way that must show up as rpm_state != VALID, never as
@@ -180,8 +205,14 @@ int main(void)
                 .rpm          = stator_rpm_val,
                 .rpm_state    = rpm_state,
                 .run_state    = CTRL_RUN_NOT_RUNNING,
-                .soc_pct      = -1.0f,
-                .soc_trusted  = false,
+                /* deliverable #10: fed from the BMS snapshot -- soc_trusted
+                 * is only true while the SOC signal (0x355) is fresh
+                 * (bms_rx.h), matching PROFILE_SPEC_LFP.md §4.3's "untrusted
+                 * SOC never gates a transition". soc_pct is -1 in exactly
+                 * the same "unknown" case ctrl_measured_t already documents,
+                 * so no new convention is introduced here. */
+                .soc_pct      = bms.soc_pct,
+                .soc_trusted  = bms.soc_trusted,
                 /* PB13 is "Enable/Ignition OR Feature-In" (board.h/HW-spec;
                  * exact split bench-pending). Wired to ignition as the
                  * conservative interim choice -- "gates a control branch" is
@@ -191,15 +222,16 @@ int main(void)
                 .ignition     = dio_ctrl_in(),
                 .feature_in   = false,                  /* TODO: same PB13 ambiguity above */
                 /* §7 R1/R6 escalations, mapped onto the engine's own fault
-                 * bits (app_ext_faults above). TODO(GH#27): OR in BMS-sourced
-                 * faults here too once CAN Rx lands. */
-                .ext_faults   = app_ext_faults(),
+                 * bits (app_ext_faults above) -- now including deliverable
+                 * #10's per-frame BMS-lost detection (bms.lost). */
+                .ext_faults   = app_ext_faults(bms.lost),
             };
 
-            /* Build arbitration ceilings: hardware limit set + thermal governor.
-             * (BMS/engine/belt/capability ceilings land with their subsystems.) */
+            /* Build arbitration ceilings: hardware limit set + thermal governor
+             * + BMS (deliverable #10). (Engine/belt/capability ceilings land
+             * with their subsystems.) */
             ctrl_ceilings_t ceil = {
-                .thermal_w = CTRL_CEILING_INACTIVE, .bms_ccl_w = CTRL_CEILING_INACTIVE,
+                .thermal_w = CTRL_CEILING_INACTIVE, .bms_ccl_w = bms.ccl_w,
                 .battery_c_w = CTRL_CEILING_INACTIVE, .wiring_w = CTRL_CEILING_INACTIVE,
                 .alt_absolute_w = CTRL_CEILING_INACTIVE, .alt_capability_w = CTRL_CEILING_INACTIVE,
                 .belt_w = CTRL_CEILING_INACTIVE, .engine_w = CTRL_CEILING_INACTIVE,

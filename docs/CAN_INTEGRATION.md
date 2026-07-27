@@ -14,12 +14,33 @@
 > config field. **Before anyone enables it, resolve the open question flagged
 > in `control/Inc/rvc_sched.h`: whether RV-C address claim is DP=1 (`0x1EE00`)
 > rather than the J1939 `60928` currently implemented** — if it is, RV-C claim
-> frames go out where no RV-C node will look. §3 (Rx / control-in) and §5
-> (multi-regulator sync) remain target behaviour.
+> frames go out where no RV-C node will look. §5 (multi-regulator sync)
+> remains target behaviour.
 > The §8 ingestion caveat is the open question that matters most:
 > whether a real Cerbo actually *categorizes and displays* this device is
 > bench-pending, and the device class/function codes it turns on are marked
 > `[SPEC-SIGNOFF]` in `Core/Src/can_n2k.c` until then.
+>
+> **§3 (Rx / control-in), partial as of deliverable #10:** the §1 dialect-
+> neutral interface (`control/bms_rx.h`/`.c`, host-tested) plus ONE vendor
+> driver — the CAN-BMS/REC/JK 11-bit standard-ID frame set (`0x351`/`0x355`/
+> `0x356`/`0x35A`) — decodes into `ctrl_ceilings_t.bms_ccl_w` and
+> `ctrl_measured_t.soc_pct`/`soc_trusted`, with per-signal loss-of-signal
+> fallback raising `CTRL_FAULT_LOST_BMS` (`Core/Src/main.c`). Byte layout and
+> scale factors are `[SPEC-SIGNOFF]`/bench-pending — reconstructed from public
+> documentation of this frame family, not verified against a REC/JK datasheet
+> or bench unit; alarm/warning bytes are decoded at byte-pair granularity only
+> (which byte, not which bit) for the same reason. **Two gaps found while
+> building this, both `[SPEC-GAP]`:** (1) **CVL has no consumer in the control
+> core** — `ctrl_ceilings_t` is Watts-only and `ctrl_profile_t.cv_target_vcell`
+> takes no external override, so this driver decodes and exposes CVL but it
+> is not yet in any min(); §6.3's "CVL below the profile CV target simply wins
+> in the min()" is not implemented. (2) **pre-disconnect is not decodable**
+> from the REC/JK frame set — no verified bit exists in `0x35A` for it; the
+> field is exposed on the interface and always reads false. Victron DVCC-via-
+> GX, JK vendor-quirk layers, J1939 engine input, N2K 127508/127506 inbound
+> battery-monitor ingestion, and multi-regulator sync (§5) remain
+> `TODO(GH#10)`.
 
 The regulator has **one** CAN bus (bxCAN on the WS500). Over that single bus it speaks
 several dialects at once — NMEA 2000, J1939, Victron VE.Can, RV-C, and CAN-BMS frames —

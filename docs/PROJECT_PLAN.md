@@ -235,7 +235,7 @@ settles most of them):
 | 7 | Update/rollback/backup/recovery | `FLASH_AND_RECOVERY.md` (+ §3) | M1 | ⬜ |
 | 8 | Client app | **WebSerial/WebUSB web app** (PC/Mac/Android: program+monitor+firmware, one codebase) + native `tools/ws500ctl/` CLI (scripting/CI/flash). iOS = monitor via CAN/VRM only. See `CLIENT_CONNECTIVITY.md` | M4 | ⬜ |
 | 9 | **CAN Tx telemetry (NMEA2000 → Cerbo)** | **Firmware side ✅ 2026-07-27 (GH#18)**: pure encoders for the §2 PGN set (127508/127506/127488/127750, 126983/126985 alerts with plain-language text, 126996/126998, proprietary fast-packet) + pure ISO 11783-81 **address claim** (NAME, contest/yield/defend, null-address exhaustion) + pure **Tx cadence engine** + bxCAN glue @250 kbit/s (drop-not-block ring, real `ESR.BOFF` → §7 R6 budget). 241 host checks. **Bench-pending**: real-bus enumeration + how a Cerbo categorizes the device (§8 caveat); [SPEC-SIGNOFF] on device class/function, preferred address, DB version, LEN | **M3** | ✅ fw side |
-| 10 | CAN Rx for control | BMS/DVCC ceilings + engine RPM into arbitration | M5 | ⬜ |
+| 10 | CAN Rx for control | **First slice ✅ 2026-07-27**: the §1 dialect-neutral inbound interface (`control/bms_rx.c`) + the CAN-BMS/REC/JK 11-bit frame set (0x351 CVL/CCL/DCL, 0x355 SOC/SOH, 0x356 V/I/T, 0x35A alarms), per-signal staleness with a **declared loss-of-signal fallback** (`CTRL_FAULT_LOST_BMS`, never-seen ≠ went-silent), CCL(A)→W on pack voltage, alarms force the ceiling to 0 W. Wired to `bms_ccl_w` / `soc_pct` / `ext_faults`; `control/` core untouched. 56 host checks. **⛔ Two hard preconditions before BMS control-in is enabled against a real pack** (safety review 2026-07-27): **(a)** a **CVL consumer** — CVL is decoded and exposed but `ctrl_ceilings_t` is Watts-only, so a BMS charge-*voltage* limit is currently NOT enforced (the current limit is), and **(b)** **pre-disconnect** handling, still `[SPEC-GAP]` (no verified bit in this frame set) — without both, a BMS's only remaining protections against us are its alarm (→ 0 W, handled) and opening its contactor, which is the load-dump event §6.3 exists to prevent. Also open: a **`bms_required` config flag** — a BMS that is dead at power-on is currently indistinguishable from "no BMS wired" and raises no fault. **Remaining**: those three, plus Victron DVCC-via-GX, J1939 engine RPM, N2K 127508/127506 ingestion. Vendor frame layouts are `[SPEC-SIGNOFF]`/bench-pending — reconstructed from public CAN-BMS docs, no datasheet or unit to verify against | M5 | 🔨 |
 | 10a | **RV-C Tx dialect** (+ RBM election) | **Firmware side ✅ 2026-07-27**: pure `rvc_encode.c` (CHARGER_STATUS, CHARGER_STATUS_2, DC_SOURCE_STATUS_1/2/3 — all single-frame, no fast-packet) + `rvc_sched.c` (cadence + **RBM election**: DC_SOURCE DGNs defer to a higher-priority master, CHARGER_STATUS never gated) over the same snapshot; dialect selector in `can_n2k.c` defaults **RV-C off** (driver state, no config-schema bump — TODO(GH#10)). 105 host checks. **⚠ Open before enabling on a real bus:** evidence says RV-C ADDRESS_CLAIM is DP=1 (`0x1EE00`), not J1939's `60928` as implemented — see the `[SPEC-SIGNOFF]` in `rvc_sched.h`. Also bench-pending: device class/function (30/129 are an inverter-charger's codes), industry group 0, current/temp scalings | M3 (close behind N2K) | ✅ fw side |
 | 11 | CAN docs | `CAN_INTEGRATION.md` | M3/M5 | 🔨 draft |
 | 12 | User documentation | `USER_MANUAL.md` (install, config, LED codes, troubleshooting) | M6 | 🔨 draft |
@@ -298,9 +298,13 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
   **CAN Tx added 2026-07-27 (#9/GH#18)**: pure N2K encoders + ISO address claim +
   cadence engine + bxCAN glue @250 kbit/s — the regulator now has a complete
   telemetry-out path in firmware, host-tested but never on a wire.
-  **Remaining:** INA2xx I²C transfers 🔨 (bus caveat GH#36), **CAN Rx for control
-  (#10)** (BMS permission/current), the **RV-C Tx dialect (#10a)** over the same
-  snapshot — plus inner-loop gain tuning and bench bring-up (§7 robustness
+  **CAN Rx first slice added 2026-07-27 (#10)**: BMS ceilings now reach the
+  arbitration min() through the §1 dialect-neutral interface, with the
+  loss-of-signal fallback the spec demands. **RV-C Tx (#10a)** landed the same
+  day.
+  **Remaining:** INA2xx I²C transfers 🔨 (bus caveat GH#36 — bench-gated, and
+  test-fw's `i2cscan` is now the tool for it), the **CVL consumer gap** #10
+  surfaced, inner-loop gain tuning (GH#34), and bench bring-up (§7 robustness
   layer #21 is done, CI-proven 2026-07-27). *Exit:* closed-loop CV hold on the
   bench supply into a dummy load, with fault cutoff verified; IWDG active; an induced
   HardFault provably lands in safe state + crash record + clean reboot.

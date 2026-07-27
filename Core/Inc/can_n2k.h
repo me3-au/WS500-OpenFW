@@ -4,11 +4,14 @@
  * Tx (telemetry → Cerbo, GH#18 deliverable #9) is implemented for BOTH
  * dialects as of PROJECT_PLAN §1 row 10a: N2K PGNs and RV-C DGNs, selectable
  * independently (can_n2k_set_n2k_enabled()/can_n2k_set_rvc_enabled() below;
- * default N2K on, RV-C off). Rx (BMS/DVCC control ceilings, GH#10) is later
- * — the RV-C half additionally listens for OTHER nodes' DC_SOURCE_STATUS
- * broadcasts for the RBM election (control/rvc_sched.c), which is the one
- * piece of "control in" this file touches ahead of GH#10, since RBM isn't a
- * charge-control ceiling. MIDDLEWARE DECISION (mirrors GH#35's usb_cdc.c
+ * default N2K on, RV-C off). Rx now also covers BMS/DVCC control ceilings
+ * (deliverable #10, CAN_INTEGRATION.md §1/§3): the CAN-BMS/REC/JK 11-bit
+ * standard-ID frame set (control/bms_rx.h) is decoded alongside the existing
+ * 29-bit extended-ID address-claim/RBM traffic — see can_n2k_bms_snapshot()
+ * below. The RV-C half additionally listens for OTHER nodes'
+ * DC_SOURCE_STATUS broadcasts for the RBM election (control/rvc_sched.c),
+ * which is the other piece of "control in" this file touches, since RBM
+ * isn't a charge-control ceiling either. MIDDLEWARE DECISION (mirrors GH#35's usb_cdc.c
  * note): this is NOT the ttlappalainen/NMEA2000 library — the PGN encoders
  * (control/n2k_encode.c), address claim (control/n2k_addrclaim.c, shared
  * dialect-neutrally by both N2K and RV-C — see can_n2k.c), N2K Tx scheduler
@@ -27,6 +30,7 @@
 #include <stdbool.h>
 #include "control.h"
 #include "telemetry.h"
+#include "bms_rx.h"
 
 /*
  * Bring up bxCAN (250 kbit/s N2K rate) and the pure address-claim/scheduler
@@ -51,6 +55,25 @@ void can_n2k_poll(void);
  * gates its own frames independently (see can_n2k.c).
  */
 void can_n2k_publish(const ctrl_telemetry_t *t);
+
+/*
+ * Pull the current dialect-neutral BMS snapshot (deliverable #10,
+ * CAN_INTEGRATION.md §1) — decoded from whatever CAN-BMS/REC/JK standard-ID
+ * frames can_n2k_poll() has drained into the pure control/bms_rx.c driver
+ * since boot. Call once per control tick, AFTER can_n2k_poll() has run this
+ * cycle (main.c's loop order already satisfies this — poll() runs every
+ * iteration, snapshot is only read inside the 10 ms tick).
+ *
+ * vbat_pack_v: pass the SAME battery-pack voltage reading the control core
+ * is using this cycle — see bms_rx_snapshot()'s doc comment (control/
+ * bms_rx.h) for why this must be the pack voltage, never the field-supply
+ * voltage, and what a lost/implausible reading does to the output.
+ *
+ * Safe to call even if can_n2k_init() failed (s_ok false) or no BMS frame
+ * has ever arrived: returns the "never seen" snapshot (every ceiling
+ * inactive, `lost` false) rather than garbage.
+ */
+void can_n2k_bms_snapshot(float vbat_pack_v, bms_snapshot_t *out);
 
 /*
  * Dialect selector (PROJECT_PLAN §1 row 10a / CAN_INTEGRATION.md §7: "the
