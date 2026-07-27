@@ -33,22 +33,28 @@ verified hardware facts (§0.6 V1–V8), and safety rules (§5).
 - Renode whole-firmware emulation: `renode/` (see its README), CI `emulation` job.
 - CI is the arbiter: `.github/workflows/build.yml` (tests, sil, firmware, emulation).
 
-## Delegation policy (PM mode)
+## Delegation policy (PM mode) — Fable-conserving (revised 2026-07-27)
 
-The main session acts as PM/orchestrator and delegates via subagents, using the
-tier mapping in PROJECT_PLAN-derived planning (rule of thumb below). Roles are
-defined in `.claude/agents/`.
+The main session acts as PM/orchestrator and delegates via subagents. Roles are
+defined in `.claude/agents/`. **The owner is conserving Fable for another
+project: run the PM session itself on Opus (or Sonnet) by default.** Fable is
+by-exception, not by-default.
 
-- **Fable (main session / `safety-reviewer`)** — decisions, binary/disassembly
-  interpretation, control-loop numerics, §7 safety architecture, debugging
-  multi-layer failures (e.g. Renode × HAL × CI), and ANY session interacting
-  with the live unit.
-- **Sonnet (`implementer`)** — spec-driven implementation: drivers (INA226,
-  EEPROM, stator RPM, DIO), CAN encoders, test-fw, SIL scenarios, client
-  app/CLI, telemetry. The RE facts are settled; cite the V-item you build on.
-- **Haiku (`doc-writer`)** — doc extraction from existing text, changelog/
-  version/issue bookkeeping, log/CSV decoding, mechanical edits.
+- **Fable — only for** (batch these into single sittings where possible):
+  the `safety-reviewer` gate below; `[SPEC-SIGNOFF]` constant sign-off batches;
+  control-loop numerics / spec-gap derivation (GH#34); binary/disassembly
+  interpretation; ANY session interacting with the live unit; and multi-layer
+  debugging (e.g. Renode × HAL × CI) only after an Opus attempt has stalled.
+- **Opus (main PM session default)** — orchestration, agent-report review,
+  test/CI gates, commits, tracker sync; code review of everything NOT on the
+  safety path; modules with tricky fault/concurrency semantics.
+- **Sonnet (`implementer`)** — spec-driven implementation: drivers, CAN
+  encoders/driver, test-fw, SIL scenarios, client app/CLI, telemetry. The RE
+  facts are settled; cite the V-item you build on.
+- **Haiku (`doc-writer`)** — doc extraction, changelog/version/issue
+  bookkeeping, log/CSV decoding, mechanical edits.
 
-**Review gate:** any change touching the field-drive path, fault ladder,
-rotor clamp, or safe-state code gets a Fable-tier review (`safety-reviewer`)
-before commit, regardless of who wrote it.
+**Review gate (unchanged, the one mandatory Fable use):** any change touching
+the field-drive path, fault ladder, rotor clamp, or safe-state code gets a
+Fable-tier review (`safety-reviewer`) before commit, regardless of author.
+Everything else: Opus review suffices.
