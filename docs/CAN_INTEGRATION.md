@@ -3,13 +3,20 @@
 > **Status:** draft. Describes the v1 CAN design (authoritative: `CONTROL_SPEC_NEXTGEN.md`
 > §8).
 >
-> **Implemented as of 2026-07-27 (GH#18, deliverable #9): the §2 Tx half only.**
-> N2K encoders (`control/n2k_encode.c`), ISO 11783-81 address claim
-> (`control/n2k_addrclaim.c`), the Tx cadence engine (`control/n2k_sched.c`) and
-> the bxCAN glue (`Core/can_n2k.c`) are written and host-tested in CI — but have
-> **never run on a real bus**, so §2 is "built, unverified", not "working". §3
-> (Rx / control-in), §5 (multi-regulator sync) and §8 (RV-C) remain target
-> behaviour. The §8 ingestion caveat is the open question that matters most:
+> **Implemented as of 2026-07-27: both Tx dialects — §2 (N2K, GH#18/#9) and
+> §8 (RV-C, #10a).** N2K encoders (`control/n2k_encode.c`), ISO 11783-81
+> address claim (`control/n2k_addrclaim.c`), both cadence engines
+> (`control/n2k_sched.c`, `control/rvc_sched.c` — the latter including the §8
+> RBM election), the RV-C DGN encoders (`control/rvc_encode.c`) and the bxCAN
+> glue (`Core/can_n2k.c`) are written and host-tested in CI — but have **never
+> run on a real bus**, so both are "built, unverified", not "working". RV-C is
+> **disabled by default**; enabling it is a driver-level call today, not yet a
+> config field. **Before anyone enables it, resolve the open question flagged
+> in `control/Inc/rvc_sched.h`: whether RV-C address claim is DP=1 (`0x1EE00`)
+> rather than the J1939 `60928` currently implemented** — if it is, RV-C claim
+> frames go out where no RV-C node will look. §3 (Rx / control-in) and §5
+> (multi-regulator sync) remain target behaviour.
+> The §8 ingestion caveat is the open question that matters most:
 > whether a real Cerbo actually *categorizes and displays* this device is
 > bench-pending, and the device class/function codes it turns on are marked
 > `[SPEC-SIGNOFF]` in `Core/Src/can_n2k.c` until then.
