@@ -48,6 +48,8 @@ set(APP_SRC
     control/Src/n2k_encode.c
     control/Src/n2k_addrclaim.c
     control/Src/n2k_sched.c
+    control/Src/rvc_encode.c
+    control/Src/rvc_sched.c
     control/Src/config_codec.c
     control/Src/config_validate.c
     control/Src/config_store.c

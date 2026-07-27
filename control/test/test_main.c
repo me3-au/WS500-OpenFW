@@ -18,6 +18,8 @@ void test_telemetry_json(void); /* {"t":"telem"} line emitter (GH#35, #20) */
 void test_n2k_encode(void); /* NMEA2000 PGN encoders (CAN_INTEGRATION.md §2, GH#18) */
 void test_n2k_addrclaim(void); /* ISO 11783-81 address claim (GH#18) */
 void test_n2k_sched(void);  /* NMEA2000 Tx cadence engine (GH#18) */
+void test_rvc_encode(void); /* RV-C DGN encoders (PROJECT_PLAN §1 row 10a) */
+void test_rvc_sched(void);  /* RV-C Tx cadence engine + RBM election (PROJECT_PLAN §1 row 10a) */
 void test_config(void);     /* packed config record: codec / slots / validator */
 void test_protocol(void);   /* JSON config wire: parser / §7 document / messages */
 void test_property(void);   /* §8.4 sweep-based invariant + boundary tests */
@@ -36,6 +38,8 @@ int main(void)
     test_n2k_encode();
     test_n2k_addrclaim();
     test_n2k_sched();
+    test_rvc_encode();
+    test_rvc_sched();
     test_config();
     test_protocol();
     test_property();

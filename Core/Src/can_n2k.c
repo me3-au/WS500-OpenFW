@@ -20,6 +20,8 @@
 #include "version.h"
 #include "n2k_addrclaim.h"
 #include "n2k_sched.h"
+#include "rvc_encode.h"
+#include "rvc_sched.h"
 
 /* ---- device identity (const-ish table next to the claim) ------------------ *
  * NAME + product info live here, not in control/, because they mix a real
@@ -118,6 +120,66 @@ static uint64_t build_name(void)
     return n2k_name_build(&f);
 }
 
+/* ---- RV-C device identity (PROJECT_PLAN §1 row 10a) ------------------------ *
+ * A second, independent ISO NAME/address for the RV-C dialect (see
+ * rvc_sched.h's file header for why this is a SEPARATE n2k_ac_t/claim rather
+ * than reusing the N2K one outright — the two dialects need distinct NAMEs,
+ * which per ISO 11783 means distinct claimed addresses too). Differs from
+ * build_name() above only in industry_group/device_class/device_function —
+ * exactly the "parameter, not new code" split the task brief anticipated. */
+#define RVC_PREFERRED_ADDR   35u   /* arbitrary distinct starting point from
+                                   * N2K_PREFERRED_ADDR — avoids our own two
+                                   * identities needlessly contesting the
+                                   * same address on first boot; not load-
+                                   * bearing for correctness either way */
+
+/* [SPEC-SIGNOFF]: no RVIA-assigned manufacturer code exists for this open
+ * project, same honest-uncertain stance as N2K_PROP_MFG_CODE — top of the
+ * 11-bit field is the self-assigned/hobby convention. RVIA's manufacturer
+ * registry is a separate namespace from NMEA's (Xantrex's own RV-C NAME
+ * uses code 119, unrelated to any NMEA code), so reusing the same NUMERIC
+ * value as N2K_PROP_MFG_CODE here is coincidental, not a registry clash. */
+#define RVC_MFG_CODE_SELFASSIGNED   2046u
+
+/* [SPEC-SIGNOFF]: Device Class 30 "Power Management" is VERIFIED against
+ * the same real-product address-claim table cited for RVC_INDUSTRY_GROUP
+ * (rvc_encode.h) — Xantrex's own Freedom SW-RVC inverter/charger uses this
+ * class. Device Function 129 "INVERTER_CHARGER" is that SAME product's
+ * function code, reused here as the closest verified real-world charging-
+ * device code — but this device is NOT an inverter, so this likely
+ * over-states capability on a real Cerbo's device list (identical caveat to
+ * N2K_DEVICE_CLASS/N2K_DEVICE_FUNCTION above: Tx-only telemetry, wrong here
+ * miscategorizes on a display, cannot reach the field-drive path). No
+ * RV-C-specific "charger-only" or "alternator" function code was found in
+ * either reference source (see rvc_encode.h's RVC_DGN_CHARGER_STATUS_2 doc
+ * comment and this file's ALTERNATOR_STATUS note below) — falsify by
+ * reading the base RV-C device-function table or checking how a real Cerbo
+ * in RV-C-profile mode actually displays this device. */
+#define RVC_DEVICE_CLASS      30u
+#define RVC_DEVICE_FUNCTION  129u
+
+static uint64_t build_name_rvc(void)
+{
+    const volatile uint32_t *uid = (const volatile uint32_t *)UID_BASE;
+    n2k_name_fields_t f = {0};
+    f.unique_number          = uid[0] & 0x1FFFFFu;  /* same UID-derived value
+                                                      * as build_name(); the
+                                                      * differing fields below
+                                                      * already guarantee this
+                                                      * NAME differs from our
+                                                      * own N2K one */
+    f.manufacturer_code      = RVC_MFG_CODE_SELFASSIGNED;
+    f.device_instance_lower  = 0u;
+    f.device_instance_upper  = 0u;
+    f.device_function        = RVC_DEVICE_FUNCTION;
+    f.device_class           = RVC_DEVICE_CLASS;
+    f.system_instance        = 0u;
+    f.industry_group         = RVC_INDUSTRY_GROUP;   /* 0 — see rvc_encode.h,
+                                                       * NOT 4 (N2K/marine) */
+    f.arbitrary_addr_capable = true;
+    return n2k_name_build(&f);
+}
+
 /* ---- driver state ----------------------------------------------------------- */
 
 static CAN_HandleTypeDef s_hcan;
@@ -127,6 +189,23 @@ static n2k_sched_t         s_sched;
 static bool               s_bus_off_latched;   /* edge-detect for CAN_FLAG_BOF */
 static uint32_t           s_bus_off_events;
 static uint32_t           s_tx_dropped;        /* ring-full or mailbox-full */
+
+/* Dialect selector (can_n2k.h): default N2K on, RV-C off, per PROJECT_PLAN
+ * §1 row 10a — "do NOT change what currently goes on the wire" by default. */
+static bool               s_n2k_enabled = true;
+static bool               s_rvc_enabled;        /* false by default (BSS) */
+static bool               s_rvc_inited;          /* lazy-init guard: the RV-C
+                                                   * NAME/address-claim/
+                                                   * scheduler state is only
+                                                   * brought up the first time
+                                                   * s_rvc_enabled goes true,
+                                                   * so a disabled RV-C dialect
+                                                   * puts NOTHING on the wire
+                                                   * -- not even a claim frame
+                                                   * (can_n2k.h's own doc
+                                                   * comment on the selector) */
+static n2k_ac_t            s_rvc_ac;
+static rvc_sched_t         s_rvc_sched;
 
 /* Software Tx ring: decouples "the scheduler produced N frames this cycle"
  * (up to N2K_SCHED_BATCH, sized for 126996's 20-frame worst case plus
@@ -181,11 +260,22 @@ static void can_drain_tx_ring(void)
     }
 }
 
-/* Drain Rx FIFO0 into the address-claim state machine. Bounded loop: the
- * hardware FIFO is 3 deep, +5 spare covers a burst arriving mid-drain
- * without ever looping on a jammed/flooded bus (never block). Full control-
- * Rx (BMS/DVCC ceilings) is OUT OF SCOPE here -- TODO(GH#10) -- only the two
- * PGNs address-claim needs are admitted by the Rx filters (can_n2k_init). */
+/* Drain Rx FIFO0 into the address-claim state machine(s) and the RV-C RBM
+ * election. Bounded loop: the hardware FIFO is 3 deep, +5 spare covers a
+ * burst arriving mid-drain without ever looping on a jammed/flooded bus
+ * (never block). Full control-Rx (BMS/DVCC ceilings) is OUT OF SCOPE here --
+ * TODO(GH#10) -- only what address-claim (both dialects) and the RV-C RBM
+ * election need is admitted by the Rx filters (can_n2k_init).
+ *
+ * Every frame is offered to the N2K claim state machine (s_ac, always live)
+ * and, once the RV-C identity exists (s_rvc_inited), to the RV-C claim
+ * state machine (s_rvc_ac) and the RBM election (s_rvc_sched) too -- each
+ * consumer ignores PGNs/DGNs it doesn't recognise (n2k_ac_rx / rvc_sched_rx
+ * contracts), so offering every frame to all of them is cheap and correct
+ * even though only one PGN range actually matches multiple consumers
+ * (N2K_PGN_ADDR_CLAIM/N2K_PGN_ISO_REQUEST, per rvc_sched.h's literal-reuse
+ * caveat -- both n2k_ac_t instances react to claims on that shared PGN
+ * pair, independently, using their own distinct NAMEs). */
 static void can_drain_rx(void)
 {
     CAN_RxHeaderTypeDef rh;
@@ -195,6 +285,11 @@ static void can_drain_rx(void)
         if (HAL_CAN_GetRxMessage(&s_hcan, CAN_RX_FIFO0, &rh, data) == HAL_OK &&
             rh.IDE == CAN_ID_EXT) {
             n2k_ac_rx(&s_ac, rh.ExtId, data, (size_t)rh.DLC);
+            if (s_rvc_inited) {
+                n2k_ac_rx(&s_rvc_ac, rh.ExtId, data, (size_t)rh.DLC);
+                rvc_sched_rx(&s_rvc_sched, HAL_GetTick(), rh.ExtId, data,
+                            (size_t)rh.DLC);
+            }
         }
     }
 }
@@ -239,6 +334,15 @@ static void can_filter_pair(uint32_t id29, uint32_t mask29,
  * a claim or request can be broadcast OR addressed to whichever address we
  * currently hold). Matches n2k_can_id()'s bit placement (n2k_encode.h). */
 #define N2K_FILTER_PGN_MASK   0x01FF0000u
+
+/* Second mask for the RV-C RBM filter bank: DP+PF (bits 24-16, same as
+ * N2K_FILTER_PGN_MASK above) PLUS PS bits 7-1 (CAN-ID bits 15-9, 0x0000FE00)
+ * -- i.e. everything the PGN/DGN needs EXCEPT the PS byte's own low bit.
+ * RVC_DGN_DC_SOURCE_STATUS_1 (0x1FFFD) and _2 (0x1FFFC) differ from each
+ * other ONLY in that low bit, so one filter bank with this widened mask
+ * admits both -- "widen the Rx filters only as much as the RBM election
+ * actually needs" (task brief), not the whole 0x1Fxxx DGN range. */
+#define RVC_FILTER_DC_SOURCE_MASK   (N2K_FILTER_PGN_MASK | 0x0000FE00u)
 
 /* ---- public API (contract: can_n2k.h) --------------------------------- */
 
@@ -298,6 +402,24 @@ void can_n2k_init(void)
     filt.FilterBank       = 1u;
     if (HAL_CAN_ConfigFilter(&s_hcan, &filt) != HAL_OK) { s_ok = false; return; }
 
+    /* Bank 2: RV-C RBM election input (DC_SOURCE_STATUS_1/2, rvc_sched.h).
+     * Configured unconditionally, same as the two banks above, regardless
+     * of s_rvc_enabled -- widening what bxCAN admits into FIFO0 doesn't put
+     * anything new on the WIRE (Tx), it only affects what we bother to
+     * look at, and can_drain_rx() only acts on these frames once the RV-C
+     * identity actually exists (s_rvc_inited) -- so the "default: do not
+     * change what currently goes on the wire" contract (can_n2k.h) still
+     * holds while avoiding a runtime filter-bank reconfigure (HAL_CAN_Stop/
+     * ConfigFilter/Start) the first time RV-C gets enabled. */
+    can_filter_pair(n2k_can_id(0u, RVC_DGN_DC_SOURCE_STATUS_2, 0u, 0u),
+                    RVC_FILTER_DC_SOURCE_MASK, &hi, &lo, &mhi, &mlo);
+    filt.FilterIdHigh     = hi;
+    filt.FilterIdLow      = lo;
+    filt.FilterMaskIdHigh = mhi;
+    filt.FilterMaskIdLow  = mlo;
+    filt.FilterBank       = 2u;
+    if (HAL_CAN_ConfigFilter(&s_hcan, &filt) != HAL_OK) { s_ok = false; return; }
+
     if (HAL_CAN_Start(&s_hcan) != HAL_OK) { s_ok = false; return; }
 
     build_serial();
@@ -307,8 +429,21 @@ void can_n2k_init(void)
         n2k_ac_init(&s_ac, name, (uint8_t)N2K_PREFERRED_ADDR);
         n2k_sched_init(&s_sched, name, &s_product, NULL, NULL, N2K_MFG_INFO);
     }
+    /* RV-C identity is brought up lazily on first enable, not here -- see
+     * s_rvc_inited's doc comment and can_n2k_set_rvc_enabled() below. */
     s_ok = true;   /* set last: poll()/publish() no-op until every piece of
                    * state they touch has actually been initialised */
+}
+
+/* Bring up the RV-C NAME/address-claim/scheduler state the first time RV-C
+ * gets enabled (can_n2k_set_rvc_enabled(), can_n2k.h doc comment: RV-C
+ * stays entirely silent, including its own address claim, until enabled). */
+static void ensure_rvc_identity(void)
+{
+    if (s_rvc_inited) return;
+    n2k_ac_init(&s_rvc_ac, build_name_rvc(), (uint8_t)RVC_PREFERRED_ADDR);
+    rvc_sched_init(&s_rvc_sched, RVC_OUR_DEVICE_PRIORITY);
+    s_rvc_inited = true;
 }
 
 void can_n2k_poll(void)
@@ -318,10 +453,18 @@ void can_n2k_poll(void)
 
     if (!s_ok) return;   /* port never came up; rest of the firmware runs on */
 
+    if (s_rvc_enabled) ensure_rvc_identity();   /* lazy bring-up, see above */
+
     can_drain_rx();
 
-    n = n2k_ac_tick(&s_ac, HAL_GetTick(), ac_out, N2K_AC_BATCH);
-    if (n > 0) can_tx_enqueue(ac_out, n);
+    if (s_n2k_enabled) {
+        n = n2k_ac_tick(&s_ac, HAL_GetTick(), ac_out, N2K_AC_BATCH);
+        if (n > 0) can_tx_enqueue(ac_out, n);
+    }
+    if (s_rvc_enabled && s_rvc_inited) {
+        n = n2k_ac_tick(&s_rvc_ac, HAL_GetTick(), ac_out, N2K_AC_BATCH);
+        if (n > 0) can_tx_enqueue(ac_out, n);
+    }
 
     can_drain_tx_ring();
     can_poll_bus_off();
@@ -334,10 +477,24 @@ void can_n2k_publish(const ctrl_telemetry_t *t)
 
     if (!s_ok || !t) return;
 
-    n = n2k_sched_tick(&s_sched, HAL_GetTick(), n2k_ac_ready(&s_ac),
-                       n2k_ac_address(&s_ac), t, out, N2K_SCHED_BATCH);
-    if (n > 0) can_tx_enqueue(out, n);
+    if (s_n2k_enabled) {
+        n = n2k_sched_tick(&s_sched, HAL_GetTick(), n2k_ac_ready(&s_ac),
+                           n2k_ac_address(&s_ac), t, out, N2K_SCHED_BATCH);
+        if (n > 0) can_tx_enqueue(out, n);
+    }
+    if (s_rvc_enabled && s_rvc_inited) {
+        n = rvc_sched_tick(&s_rvc_sched, HAL_GetTick(),
+                           n2k_ac_ready(&s_rvc_ac), n2k_ac_address(&s_rvc_ac),
+                           t, out, N2K_SCHED_BATCH);
+        if (n > 0) can_tx_enqueue(out, n);
+    }
 }
+
+/* ---- dialect selector (contract: can_n2k.h) ------------------------------ */
+void can_n2k_set_n2k_enabled(bool enabled) { s_n2k_enabled = enabled; }
+bool can_n2k_n2k_enabled(void) { return s_n2k_enabled; }
+void can_n2k_set_rvc_enabled(bool enabled) { s_rvc_enabled = enabled; }
+bool can_n2k_rvc_enabled(void) { return s_rvc_enabled; }
 
 /* §7 R6 bus-off accounting. Contract: can_n2k.h. Deliberately does NOT try to
  * force recovery — bxCAN's automatic bus-off recovery does that in hardware
