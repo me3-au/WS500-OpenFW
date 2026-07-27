@@ -1,7 +1,18 @@
 # WS500-OpenFW — CAN / NMEA 2000 Integration
 
 > **Status:** draft. Describes the v1 CAN design (authoritative: `CONTROL_SPEC_NEXTGEN.md`
-> §8). The CAN driver/PGN layer is not yet implemented — this is the target behavior.
+> §8).
+>
+> **Implemented as of 2026-07-27 (GH#18, deliverable #9): the §2 Tx half only.**
+> N2K encoders (`control/n2k_encode.c`), ISO 11783-81 address claim
+> (`control/n2k_addrclaim.c`), the Tx cadence engine (`control/n2k_sched.c`) and
+> the bxCAN glue (`Core/can_n2k.c`) are written and host-tested in CI — but have
+> **never run on a real bus**, so §2 is "built, unverified", not "working". §3
+> (Rx / control-in), §5 (multi-regulator sync) and §8 (RV-C) remain target
+> behaviour. The §8 ingestion caveat is the open question that matters most:
+> whether a real Cerbo actually *categorizes and displays* this device is
+> bench-pending, and the device class/function codes it turns on are marked
+> `[SPEC-SIGNOFF]` in `Core/Src/can_n2k.c` until then.
 
 The regulator has **one** CAN bus (bxCAN on the WS500). Over that single bus it speaks
 several dialects at once — NMEA 2000, J1939, Victron VE.Can, RV-C, and CAN-BMS frames —

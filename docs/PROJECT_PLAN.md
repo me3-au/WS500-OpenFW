@@ -234,7 +234,7 @@ settles most of them):
 | 6a | **Config strategy decision** | **DECIDED: B — clean break to the PROFILE_SPEC §7 JSON schema**; packed binary+CRC in EEPROM; stock-dump translation lives in the client app | M2/M3 | ✅ (2026-07-26) |
 | 7 | Update/rollback/backup/recovery | `FLASH_AND_RECOVERY.md` (+ §3) | M1 | ⬜ |
 | 8 | Client app | **WebSerial/WebUSB web app** (PC/Mac/Android: program+monitor+firmware, one codebase) + native `tools/ws500ctl/` CLI (scripting/CI/flash). iOS = monitor via CAN/VRM only. See `CLIENT_CONNECTIVITY.md` | M4 | ⬜ |
-| 9 | **CAN Tx telemetry (NMEA2000 → Cerbo)** | broadcast the dialect-neutral snapshot as N2K PGNs; **near-term / low-risk** (read-only) | **M3** | 🔨 snapshot done |
+| 9 | **CAN Tx telemetry (NMEA2000 → Cerbo)** | **Firmware side ✅ 2026-07-27 (GH#18)**: pure encoders for the §2 PGN set (127508/127506/127488/127750, 126983/126985 alerts with plain-language text, 126996/126998, proprietary fast-packet) + pure ISO 11783-81 **address claim** (NAME, contest/yield/defend, null-address exhaustion) + pure **Tx cadence engine** + bxCAN glue @250 kbit/s (drop-not-block ring, real `ESR.BOFF` → §7 R6 budget). 241 host checks. **Bench-pending**: real-bus enumeration + how a Cerbo categorizes the device (§8 caveat); [SPEC-SIGNOFF] on device class/function, preferred address, DB version, LEN | **M3** | ✅ fw side |
 | 10 | CAN Rx for control | BMS/DVCC ceilings + engine RPM into arbitration | M5 | ⬜ |
 | 10a | **RV-C Tx dialect** (+ RBM election) | 2nd encoder over the same snapshot; **co-important** — a Cerbo's port is N2K *or* RV-C, so RV owners need this to see us | M3 (close behind N2K) | ⬜ |
 | 11 | CAN docs | `CAN_INTEGRATION.md` | M3/M5 | 🔨 draft |
@@ -246,7 +246,7 @@ settles most of them):
 | 17 | **OSS hygiene** | `CONTRIBUTING.md` (no-GPL + safety-gate rules), `CODE_OF_CONDUCT.md`, `SECURITY.md` (unsafe-charging = security-priority), issue/PR templates incl. hardware-fact provenance template, README badges — all done 2026-07-24 | M0 | ✅ |
 | 18 | **Versioning + release** | `VERSION` (0.1.0-dev) + `Core/Inc/version.h` + `CHANGELOG.md` ✅ (2026-07-24); tag/release flow exercised at M6 | M0→M6 | 🔨 |
 | 19 | **Emulation harness** | Renode model (STM32F072 + peripherals + INA stub) for hardware-free dev/CI; part of the §8 virtual-first strategy with the SIL plant sim (8.1). ✅ **CI-green 2026-07-26**: `renode/` harness boots the real ELF, `ctrl_tick` liveness verified in the `emulation` job. V6 stock-trace use still ⬜ | M0→M1 | ✅ |
-| 20 | **Telemetry / logging** | **USB half ✅ 2026-07-27**: MIT CDC-ACM transport (ST middleware rejected, SLA0044) + 1 Hz JSON telem line + telem-get with the §7 diag surfaces; caps ["cfg","telem"]. Bench-pending: real-host enumeration; release: permanent PID. CAN half ⬜ (with #9/#18) | M4–M5 | 🔨 |
+| 20 | **Telemetry / logging** | **USB half ✅ 2026-07-27**: MIT CDC-ACM transport (ST middleware rejected, SLA0044) + 1 Hz JSON telem line + telem-get with the §7 diag surfaces; caps ["cfg","telem"]. Bench-pending: real-host enumeration; release: permanent PID. **CAN half ✅ 2026-07-27** — #9's proprietary fast-packet carries the full snapshot (field effort, binding source + ceiling, temps, RPM state, active profile, fault bits) at 1.5 s. Remaining: surface `can_n2k_bus_off_count()` / `can_n2k_tx_dropped_count()` in the telemetry line (TODO(GH#10)) | M4–M5 | 🔨 |
 | 21 | **Robustness / error reporting** | §7 R0–R6 ✅ **implemented + CI-proven 2026-07-27** (GH#27 closed): funnel, windowed checkpoint IWDG, `.noinit` crash ring + reset-cause counters, two-stage M0 fault handlers, flash CRC (report-only) + stack painting + bottom-of-RAM stack, PVD, err budgets. Renode proves the M3 fault-path criterion in CI. Bench-pending: IWDG/PVD behavior, SRAM-parity + BOR option bytes (manual, M1-adjacent); telemetry surface with #20 | M3–M4 | ✅ fw side |
 
 ## 2. Milestones (safety and recovery come before any flash write)
@@ -287,9 +287,13 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
   until poles/pulley configured), `eeprom24c16.c` (raw 24C16 per V7, PA15 /WP, no
   record format until #6a), `dio.c` (DIP bank + PB13→ignition as flagged interim;
   Lamp-vs-LED still unresolved). Bench-pending: I2C2 TIMING value, PB13 pull/role.
+  **CAN Tx added 2026-07-27 (#9/GH#18)**: pure N2K encoders + ISO address claim +
+  cadence engine + bxCAN glue @250 kbit/s — the regulator now has a complete
+  telemetry-out path in firmware, host-tested but never on a wire.
   **Remaining:** INA2xx I²C transfers 🔨 (bus caveat GH#36), **CAN Rx for control
-  (#10)** (BMS permission/current) — plus inner-loop gain tuning, the §7 robustness
-  layer (#21: IWDG, fault handlers, crash records), and bench bring-up. *Exit:* closed-loop CV hold on the
+  (#10)** (BMS permission/current), the **RV-C Tx dialect (#10a)** over the same
+  snapshot — plus inner-loop gain tuning and bench bring-up (§7 robustness
+  layer #21 is done, CI-proven 2026-07-27). *Exit:* closed-loop CV hold on the
   bench supply into a dummy load, with fault cutoff verified; IWDG active; an induced
   HardFault provably lands in safe state + crash record + clean reboot.
 - **M4 — Config + client app.** Config schema (per #6a), flash config store (CRC+version),
