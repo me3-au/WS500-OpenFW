@@ -240,7 +240,7 @@ settles most of them):
 | 11 | CAN docs | `CAN_INTEGRATION.md` | M3/M5 | 🔨 draft |
 | 12 | User documentation | `USER_MANUAL.md` (install, config, LED codes, troubleshooting) | M6 | 🔨 draft |
 | 13 | Testing + bug tracking | control-core unit tests (CI) ✅ + **SIL gauntlet `sim/` (CI, §8.1)** ✅; `TEST_PLAN.md` ⬜; Renode ⬜; bench HIL ⬜; GitHub Issues ✅ | M0→M6 | 🔨 |
-| 14 | Bring-up test firmware | `test-fw/` (§4). *ADC binding already recovered — this confirms scaling on bench* | M2 | ⬜ |
+| 14 | Bring-up test firmware | **Built 2026-07-27**: `test-fw/` is a second CMake target (`ws500-testfw.elf`, CI-built) sharing `board.c` + the production drivers — USB-CDC console with `gpio`/`adc`/`field`/`cutoff`/`can`/`i2cscan`. Field path is funnelled through `field_guard.c`: compiled-in **20 % duty cap**, field-off default, and a **5 s self-expiry** so a dropped console can't leave the field energised. The `i2cscan` command is the bench falsification step for the `ina2xx.c` I²C1-vs-I²C2 bus caveat (GH#36). *Never run on hardware — that is M2 itself* | M2 | ✅ fw side |
 | 15 | Bench safety | `SAFETY.md` (§5); gates every hardware milestone | all HW | 🔨 |
 | 16 | **License + third-party NOTICE** | **LICENSE = MIT** ✅ + `NOTICE` ✅ (CMSIS Apache-2.0 / HAL BSD-3 / NMEA2000 MIT-planned; Thomason courtesy attribution; **no GPL code in-tree — VSR is reference-only**); README/OPEN_SOURCE license text aligned | **M0 (now)** | ✅ |
 | 17 | **OSS hygiene** | `CONTRIBUTING.md` (no-GPL + safety-gate rules), `CODE_OF_CONDUCT.md`, `SECURITY.md` (unsafe-charging = security-priority), issue/PR templates incl. hardware-fact provenance template, README badges — all done 2026-07-24 | M0 | ✅ |
@@ -268,7 +268,8 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
   Verified stock-image backup, documented+rehearsed DFU restore, SWD permanently wired,
   BOOT0/DFU entry-exit rehearsed. *Exit:* stock image demonstrably restores the unit via DFU
   on the bench; `FLASH_AND_RECOVERY.md` written.
-- **M2 — Bring-up firmware** (`test-fw`, §4). Confirm every I/O on the bench; **bench-confirm
+- **M2 — Bring-up firmware** (`test-fw`, §4). 🔨 *firmware written 2026-07-27 (#14) and
+  CI-built; everything below is the bench session it enables.* Confirm every I/O on the bench; **bench-confirm
   ADC scaling** (binding is already recovered); resolve the two label unknowns (PB13 =
   Enable vs Feature-In; which output = Lamp vs LED); identify the 0x0C/0x10/0x4C I²C devices;
   confirm package + field-driver topology. *Exit:* `board.h` constants bench-verified; I/O
@@ -287,6 +288,13 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
   until poles/pulley configured), `eeprom24c16.c` (raw 24C16 per V7, PA15 /WP, no
   record format until #6a), `dio.c` (DIP bank + PB13→ignition as flagged interim;
   Lamp-vs-LED still unresolved). Bench-pending: I2C2 TIMING value, PB13 pull/role.
+  **ADC gap found + fixed 2026-07-27** (while building #14): `HAL_ADC_MspInit` did
+  not exist anywhere in the tree — ADC1/DMA1 clocks were never enabled and
+  `hdma_adc1` was never linked, so `HAL_ADC_Start_DMA()` would have failed on
+  first contact with real hardware and **the whole sensor scan would never have
+  run**. `sensors.c` had a stale comment saying board.c owed the callback; it had
+  simply never been written, and with no hardware nothing could catch it. Now
+  owned by `sensors.c` itself, matching the per-driver-owns-its-MSP-hook pattern.
   **CAN Tx added 2026-07-27 (#9/GH#18)**: pure N2K encoders + ISO address claim +
   cadence engine + bxCAN glue @250 kbit/s — the regulator now has a complete
   telemetry-out path in firmware, host-tested but never on a wire.

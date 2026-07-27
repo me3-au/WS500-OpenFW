@@ -58,6 +58,40 @@ set(APP_SRC
     control/Src/config_msg.c
 )
 
+# --- test-fw: bring-up test firmware (deliverable #14, PROJECT_PLAN §4/M2) --
+# A SECOND, separate build target sharing board.c and the production drivers
+# rather than duplicating them (test-fw/README.md). Deliberately narrower than
+# APP_SRC above: no control/ engine, no config/telemetry pipeline, no
+# can_n2k.c (the full NMEA2000/RV-C stack) — test-fw's console is its own
+# operator interface. It DOES share the §7-style robustness trio (safe_state/
+# crash_record/fault_handlers/watchdog) so "never a bare while(1)" and the
+# field-off funnel hold here too, not just in the main firmware.
+set(TESTFW_SRC
+    test-fw/main.c
+    test-fw/console.c
+    test-fw/field_guard.c
+    test-fw/can_test.c
+    test-fw/i2c_scan.c
+    Core/Src/board.c
+    Core/Src/field_drive.c
+    Core/Src/safe_state.c
+    Core/Src/crash_record.c
+    Core/Src/fault_handlers.c
+    Core/Src/watchdog.c
+    Core/Src/err_budget.c
+    Core/Src/sensors.c
+    Core/Src/ina2xx.c
+    Core/Src/eeprom24c16.c
+    Core/Src/stator_rpm.c
+    Core/Src/dio.c
+    Core/Src/usb_cdc.c
+    # PURE (HAL-free) — only linked for cfg_json_fmt_g()/cfg_json_scan_num(),
+    # the firmware's one shared float formatter/parser (newlib-nano has no
+    # float printf/scanf, see console.c's file header). Nothing else from
+    # control/ is needed: test-fw carries no control-core state.
+    control/Src/config_json.c
+)
+
 # --- Vendored deps you must add (see Drivers/README.md) ---
 #   STM32Cube HAL (BSD-3): Drivers/STM32F0xx_HAL_Driver, Drivers/CMSIS
 #   plus startup_stm32f072xb.s and system_stm32f0xx.c.
@@ -67,19 +101,30 @@ set(STARTUP  Drivers/CMSIS/Device/ST/STM32F0xx/Source/Templates/gcc/startup_stm3
 set(SYSTEM   Drivers/CMSIS/Device/ST/STM32F0xx/Source/Templates/system_stm32f0xx.c)
 
 add_executable(${PROJECT_NAME}.elf ${APP_SRC} ${HAL_SRC} ${STARTUP} ${SYSTEM})
+add_executable(ws500-testfw.elf ${TESTFW_SRC} ${HAL_SRC} ${STARTUP} ${SYSTEM})
 
-target_compile_definitions(${PROJECT_NAME}.elf PRIVATE STM32F072xB USE_HAL_DRIVER)
-target_include_directories(${PROJECT_NAME}.elf PRIVATE
-    Core/Inc
-    control/Inc
-    Drivers/STM32F0xx_HAL_Driver/Inc
-    Drivers/CMSIS/Device/ST/STM32F0xx/Include
-    Drivers/CMSIS/Include
-)
-target_link_options(${PROJECT_NAME}.elf PRIVATE
-    -T${LINKER_SCRIPT} -Wl,-Map=${PROJECT_NAME}.map,--cref)
-# libm's logf references __errno from libc; group them so single-pass ld resolves it
-target_link_libraries(${PROJECT_NAME}.elf PRIVATE -Wl,--start-group c m -Wl,--end-group)
+set(WS500_TARGETS ${PROJECT_NAME}.elf ws500-testfw.elf)
+
+foreach(tgt ${WS500_TARGETS})
+    # Stem without ".elf" (e.g. "ws500-openfw" from "ws500-openfw.elf") — kept
+    # identical to the pre-existing naming (${PROJECT_NAME}.bin/.map, NOT
+    # ${PROJECT_NAME}.elf.bin) so .github/workflows/build.yml's artifact paths
+    # for the main target are unchanged.
+    get_filename_component(stem ${tgt} NAME_WE)
+
+    target_compile_definitions(${tgt} PRIVATE STM32F072xB USE_HAL_DRIVER)
+    target_include_directories(${tgt} PRIVATE
+        Core/Inc
+        control/Inc
+        Drivers/STM32F0xx_HAL_Driver/Inc
+        Drivers/CMSIS/Device/ST/STM32F0xx/Include
+        Drivers/CMSIS/Include
+    )
+    target_link_options(${tgt} PRIVATE
+        -T${LINKER_SCRIPT} -Wl,-Map=${stem}.map,--cref)
+    # libm's logf references __errno from libc; group them so single-pass ld resolves it
+    target_link_libraries(${tgt} PRIVATE -Wl,--start-group c m -Wl,--end-group)
+endforeach()
 
 # Post-build: raw binary, then patch the §7 R4 image CRC into its last four
 # bytes (the `.fw_crc` section the linker script places last), then report size.
@@ -88,12 +133,18 @@ target_link_libraries(${PROJECT_NAME}.elf PRIVATE -Wl,--start-group c m -Wl,--en
 # by a debugger or into Renode keeps the 0xFFFFFFFF placeholder, which
 # integrity.c reports as INTEGRITY_CRC_UNPATCHED rather than as corruption.
 # That is the intended behaviour (see integrity.c's header); the .bin is what
-# DFU/updates actually flash, and it is what M4 verifies.
+# DFU/updates actually flash, and it is what M4 verifies. test-fw does NOT
+# link integrity.c (out of scope for this small bring-up target — see
+# test-fw/README.md), so the CRC is patched for consistency with the main
+# image but nothing on that target reads it back; harmless either way.
 #
 # find_package(Python3) is deliberately not used: the script is stdlib-only and
 # CI already runs python3 for the docs lint.
 find_program(PYTHON3_EXE NAMES python3 python REQUIRED)
-add_custom_command(TARGET ${PROJECT_NAME}.elf POST_BUILD
-    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${PROJECT_NAME}.elf> ${PROJECT_NAME}.bin
-    COMMAND ${PYTHON3_EXE} ${CMAKE_SOURCE_DIR}/scripts/embed_crc.py ${PROJECT_NAME}.bin
-    COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${PROJECT_NAME}.elf>)
+foreach(tgt ${WS500_TARGETS})
+    get_filename_component(stem ${tgt} NAME_WE)
+    add_custom_command(TARGET ${tgt} POST_BUILD
+        COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${tgt}> ${stem}.bin
+        COMMAND ${PYTHON3_EXE} ${CMAKE_SOURCE_DIR}/scripts/embed_crc.py ${stem}.bin
+        COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${tgt}>)
+endforeach()

@@ -50,6 +50,10 @@ jobs:
       - name: Configure
         run: cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
 
+      # Builds BOTH targets: ws500-openfw.elf (the regulator) and
+      # ws500-testfw.elf (the bring-up test firmware, deliverable #14,
+      # PROJECT_PLAN §4/M2) — `all` (CMakeLists.txt's default) covers both
+      # add_executable() calls, so this is the same command as before.
       - name: Build
         run: cmake --build build -j
 
@@ -61,6 +65,15 @@ jobs:
             build/ws500-openfw.elf
             build/ws500-openfw.bin
             build/ws500-openfw.map
+
+      - name: Upload test-fw artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ws500-testfw
+          path: |
+            build/ws500-testfw.elf
+            build/ws500-testfw.bin
+            build/ws500-testfw.map
 
   # Whole-firmware emulation — boots ws500-openfw.elf on an emulated STM32F072RB
   # in Renode and asserts the 10 ms control loop iterates (PROJECT_PLAN §8.2,

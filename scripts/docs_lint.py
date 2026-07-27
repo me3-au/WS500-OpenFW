@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SCAN_DIRS = ["Core", "control", "sim"]
+SCAN_DIRS = ["Core", "control", "sim", "test-fw"]
 HEADER_DIRS = ["Core/Inc", "control/Inc"]
 
 # Prototype heuristic: a top-level line ending in ');' whose first token looks
