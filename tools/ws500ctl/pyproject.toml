@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ws500ctl"
+version = "0.1.0.dev0"
+description = "CLI client for WS500-OpenFW (USB-CDC JSON-lines config protocol, GH#17)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "pyserial>=3.5",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[project.scripts]
+ws500ctl = "ws500ctl.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["ws500ctl*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
