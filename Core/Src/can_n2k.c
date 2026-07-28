@@ -1,12 +1,10 @@
 /*
- * can_n2k.c — bxCAN HAL glue for NMEA2000/RV-C Tx (GH#18, deliverable #9) and
- * BMS/DVCC control-in (deliverable #10, CAN_INTEGRATION.md §1; contract:
- * can_n2k.h). Thin by design: every timing/priority/state/decode decision
- * lives in the pure control/n2k_addrclaim.c, control/n2k_sched.c,
- * control/rvc_sched.c and control/bms_rx.c modules (host-tested, see the
- * matching control/test/*.c files); this file only drives them from real
- * bxCAN registers and HAL_GetTick(), pushes the frames they produce at the
- * wire, and hands received frames to them.
+ * can_n2k.c — bxCAN HAL glue for NMEA2000 Tx (GH#18, deliverable #9;
+ * contract: can_n2k.h). Thin by design: every timing/priority/state
+ * decision lives in the pure control/n2k_addrclaim.c and control/n2k_sched.c
+ * modules (host-tested, see control/test/test_n2k_addrclaim.c and
+ * test_n2k_sched.c); this file only drives them from real bxCAN registers
+ * and HAL_GetTick(), and pushes the frames they produce at the wire.
  *
  * Polling-only (no CAN IRQ) — same "never block" contract as usb_cdc.c: a
  * software Tx ring decouples "the scheduler decided N frames are due this
@@ -24,7 +22,6 @@
 #include "n2k_sched.h"
 #include "rvc_encode.h"
 #include "rvc_sched.h"
-#include "bms_rx.h"
 
 /* ---- device identity (const-ish table next to the claim) ------------------ *
  * NAME + product info live here, not in control/, because they mix a real
@@ -210,16 +207,6 @@ static bool               s_rvc_inited;          /* lazy-init guard: the RV-C
 static n2k_ac_t            s_rvc_ac;
 static rvc_sched_t         s_rvc_sched;
 
-/* BMS/DVCC control-in (deliverable #10, CAN_INTEGRATION.md §1) -- the pure
- * decode/staleness state machine lives in control/bms_rx.c; this file only
- * feeds it standard-ID frames off the wire and hands the resulting snapshot
- * to main.c (can_n2k_bms_snapshot() below). Always live, unlike the RV-C
- * dialect selector above -- there is no "off by default" story for Rx: an
- * install with no BMS wired simply never produces a frame this decodes, and
- * bms_rx.c's own NEVER-vs-STALE distinction (bms_rx.h) already makes that
- * the non-fault case. */
-static bms_rx_t            s_bms;
-
 /* Software Tx ring: decouples "the scheduler produced N frames this cycle"
  * (up to N2K_SCHED_BATCH, sized for 126996's 20-frame worst case plus
  * headroom) from bxCAN's 3 hardware mailboxes, which can't possibly drain a
@@ -273,45 +260,36 @@ static void can_drain_tx_ring(void)
     }
 }
 
-/* Drain Rx FIFO0 into the address-claim state machine(s), the RV-C RBM
- * election, and (deliverable #10) the BMS/DVCC decoder. Bounded loop: the
- * hardware FIFO is 3 deep, +5 spare covers a burst arriving mid-drain
- * without ever looping on a jammed/flooded bus (never block).
+/* Drain Rx FIFO0 into the address-claim state machine(s) and the RV-C RBM
+ * election. Bounded loop: the hardware FIFO is 3 deep, +5 spare covers a
+ * burst arriving mid-drain without ever looping on a jammed/flooded bus
+ * (never block). Full control-Rx (BMS/DVCC ceilings) is OUT OF SCOPE here --
+ * TODO(GH#10) -- only what address-claim (both dialects) and the RV-C RBM
+ * election need is admitted by the Rx filters (can_n2k_init).
  *
- * Every EXTENDED-ID frame is offered to the N2K claim state machine (s_ac,
- * always live) and, once the RV-C identity exists (s_rvc_inited), to the
- * RV-C claim state machine (s_rvc_ac) and the RBM election (s_rvc_sched)
- * too -- each consumer ignores PGNs/DGNs it doesn't recognise (n2k_ac_rx /
- * rvc_sched_rx contracts), so offering every frame to all of them is cheap
- * and correct even though only one PGN range actually matches multiple
- * consumers (N2K_PGN_ADDR_CLAIM/N2K_PGN_ISO_REQUEST, per rvc_sched.h's
- * literal-reuse caveat -- both n2k_ac_t instances react to claims on that
- * shared PGN pair, independently, using their own distinct NAMEs).
- *
- * STANDARD-ID (11-bit) frames are new as of deliverable #10: the CAN-BMS/
- * REC/JK frame set (control/bms_rx.h) uses 11-bit IDs, unlike every N2K/RV-C
- * PGN/DGN above which is always a 29-bit extended ID -- this is the first
- * driver on this bus that isn't. bms_rx_frame() itself ignores any id it
- * doesn't decode, so offering it every standard-ID frame unconditionally is
- * the same "cheap and correct" pattern as the extended-ID consumers above;
- * the Rx filter bank (can_n2k_init) is what actually keeps unrelated
- * standard-ID traffic off this bus out of FIFO0 in the first place. */
+ * Every frame is offered to the N2K claim state machine (s_ac, always live)
+ * and, once the RV-C identity exists (s_rvc_inited), to the RV-C claim
+ * state machine (s_rvc_ac) and the RBM election (s_rvc_sched) too -- each
+ * consumer ignores PGNs/DGNs it doesn't recognise (n2k_ac_rx / rvc_sched_rx
+ * contracts), so offering every frame to all of them is cheap and correct
+ * even though only one PGN range actually matches multiple consumers
+ * (N2K_PGN_ADDR_CLAIM/N2K_PGN_ISO_REQUEST, per rvc_sched.h's literal-reuse
+ * caveat -- both n2k_ac_t instances react to claims on that shared PGN
+ * pair, independently, using their own distinct NAMEs). */
 static void can_drain_rx(void)
 {
     CAN_RxHeaderTypeDef rh;
     uint8_t data[8];
     int i;
     for (i = 0; i < 8 && HAL_CAN_GetRxFifoFillLevel(&s_hcan, CAN_RX_FIFO0) > 0u; i++) {
-        if (HAL_CAN_GetRxMessage(&s_hcan, CAN_RX_FIFO0, &rh, data) != HAL_OK) continue;
-        if (rh.IDE == CAN_ID_EXT) {
+        if (HAL_CAN_GetRxMessage(&s_hcan, CAN_RX_FIFO0, &rh, data) == HAL_OK &&
+            rh.IDE == CAN_ID_EXT) {
             n2k_ac_rx(&s_ac, rh.ExtId, data, (size_t)rh.DLC);
             if (s_rvc_inited) {
                 n2k_ac_rx(&s_rvc_ac, rh.ExtId, data, (size_t)rh.DLC);
                 rvc_sched_rx(&s_rvc_sched, HAL_GetTick(), rh.ExtId, data,
                             (size_t)rh.DLC);
             }
-        } else {
-            bms_rx_frame(&s_bms, HAL_GetTick(), rh.StdId, data, (size_t)rh.DLC);
         }
     }
 }
@@ -330,11 +308,9 @@ static void can_poll_bus_off(void)
     }
 }
 
-/* ---- Rx filter: admit only PGN 60928 (Address Claim) / 59904 (ISO Request),
- * the RV-C RBM DC_SOURCE_STATUS pair, and (deliverable #10) the CAN-BMS/
- * REC/JK standard-ID frame set into FIFO0 -- everything else this driver
- * doesn't understand is left un-filtered-in, so bxCAN discards it in
- * hardware. -------------------------------------------------------------- */
+/* ---- Rx filter: admit only PGN 60928 (Address Claim) / 59904 (ISO Request)
+ * into FIFO0 -- everything else this driver doesn't yet understand (GH#10)
+ * is left un-filtered-in, so bxCAN discards it in hardware. -------------- */
 
 /* bxCAN 32-bit-scale filter register format (RM0091 §30.7.4, standard
  * silicon behaviour, not a WS500-specific fact): bits[31:3] = the 29-bit
@@ -367,28 +343,6 @@ static void can_filter_pair(uint32_t id29, uint32_t mask29,
  * admits both -- "widen the Rx filters only as much as the RBM election
  * actually needs" (task brief), not the whole 0x1Fxxx DGN range. */
 #define RVC_FILTER_DC_SOURCE_MASK   (N2K_FILTER_PGN_MASK | 0x0000FE00u)
-
-/* bxCAN 16-bit-scale IDENTIFIER LIST mode (RM0091 §30.7.4, standard silicon
- * behaviour): with FilterScale=16BIT and FilterMode=IDLIST, one filter bank
- * holds up to FOUR distinct 11-bit standard IDs (FilterIdLow/FilterIdHigh/
- * FilterMaskIdLow/FilterMaskIdHigh each carry one, despite the "Mask" names
- * -- in list mode every one of the four registers is an exact ID to admit,
- * not a mask). Bit layout per 16-bit slot, per RM0091: STID[10:0] in
- * bits[15:5], **RTR in bit4** (0 = data frame), **IDE in bit3** (0 =
- * CAN_ID_STD here -- this is the whole reason a separate bank is needed:
- * every other bank on this bus requires IDE=1), EXID[17:15] in bits[2:0].
- * Both bits are 0 for every ID we admit, so the helper below is correct
- * either way -- but the order matters to anyone extending it to admit
- * remote or extended frames, so it is stated the way the reference manual
- * has it. This is an EXACT list, not the widened-mask
- * style the other banks use, because the four CAN-BMS/REC/JK IDs
- * (bms_rx.h) don't share a convenient bit pattern the way the N2K/RV-C PGNs
- * above do -- and an exact 4-ID list is cheap in list mode, so there is no
- * reason to widen. */
-static uint16_t can_filter_std_id16(uint32_t id11)
-{
-    return (uint16_t)((id11 & 0x7FFu) << 5);   /* RTR=0, IDE=0, EXID=0 */
-}
 
 /* ---- public API (contract: can_n2k.h) --------------------------------- */
 
@@ -466,19 +420,6 @@ void can_n2k_init(void)
     filt.FilterBank       = 2u;
     if (HAL_CAN_ConfigFilter(&s_hcan, &filt) != HAL_OK) { s_ok = false; return; }
 
-    /* Bank 3: CAN-BMS/REC/JK BMS ceilings (deliverable #10, bms_rx.h) -- the
-     * only standard-ID (11-bit) bank on this bus; every bank above requires
-     * IDE=1 (extended). Exact 4-ID list, list mode (see
-     * can_filter_std_id16()'s doc comment above). */
-    filt.FilterIdHigh     = can_filter_std_id16(BMS_RX_ID_LIMITS);
-    filt.FilterIdLow      = can_filter_std_id16(BMS_RX_ID_SOC);
-    filt.FilterMaskIdHigh = can_filter_std_id16(BMS_RX_ID_STATUS);
-    filt.FilterMaskIdLow  = can_filter_std_id16(BMS_RX_ID_ALARM);
-    filt.FilterBank       = 3u;
-    filt.FilterMode       = CAN_FILTERMODE_IDLIST;
-    filt.FilterScale      = CAN_FILTERSCALE_16BIT;
-    if (HAL_CAN_ConfigFilter(&s_hcan, &filt) != HAL_OK) { s_ok = false; return; }
-
     if (HAL_CAN_Start(&s_hcan) != HAL_OK) { s_ok = false; return; }
 
     build_serial();
@@ -490,8 +431,6 @@ void can_n2k_init(void)
     }
     /* RV-C identity is brought up lazily on first enable, not here -- see
      * s_rvc_inited's doc comment and can_n2k_set_rvc_enabled() below. */
-    bms_rx_init(&s_bms);   /* deliverable #10: always live, no enable gate
-                           * (see s_bms's own doc comment above) */
     s_ok = true;   /* set last: poll()/publish() no-op until every piece of
                    * state they touch has actually been initialised */
 }
@@ -549,17 +488,6 @@ void can_n2k_publish(const ctrl_telemetry_t *t)
                            t, out, N2K_SCHED_BATCH);
         if (n > 0) can_tx_enqueue(out, n);
     }
-}
-
-/* Contract: can_n2k.h. Delegates straight to the pure driver -- safe even if
- * can_n2k_init() failed (s_ok false) or no frame has ever arrived: s_bms's
- * static storage starts zeroed, which reads as every signal state ==
- * BMS_SIG_NEVER (enum value 0, bms_rx.h), and bms_rx_snapshot() only reads
- * the raw decoded fields behind a FRESH check -- there is no path from
- * "never initialised" to a garbage numeric ceiling. */
-void can_n2k_bms_snapshot(float vbat_pack_v, bms_snapshot_t *out)
-{
-    bms_rx_snapshot(&s_bms, HAL_GetTick(), vbat_pack_v, out);
 }
 
 /* ---- dialect selector (contract: can_n2k.h) ------------------------------ */
