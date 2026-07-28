@@ -61,9 +61,12 @@ for**, and how it fits common systems.
   *(Caveat: Victron's ingestion is device-type-specific — the documented RV-C-IN types
   are tanks/batteries/senders, not alternators — so verify the device actually shows on
   real hardware; it may need to present as a DC-source/charger type the GX accepts.)*
-- **CAN Rx (control IN — BMS/DVCC ceilings)** comes **later**; until then those
-  ceilings simply aren't in the arbitration min() and the regulator runs on its own
-  profile + hardware limits.
+- **CAN Rx (control IN — BMS/DVCC ceilings) is V2 scope** (owner decision 2026-07-28,
+  PROJECT_PLAN §1.1 — covers BMS, pre-disconnect, DVCC, external battery-monitor V/I,
+  J1939 engine, multi-WS500 sync). In V1 those ceilings simply aren't in the
+  arbitration min() and the regulator runs on its own profile + hardware limits.
+  The already-implemented BMS decoder slice stays in-tree but must be gated
+  default-off for V1 (PROJECT_PLAN #10).
 - **Dialect-neutral snapshot:** the firmware builds one internal telemetry snapshot
   (`control/telemetry.h`) describing *what* to report; per-dialect **encoders** map it
   to the wire. **N2K encoder first**, **RV-C encoder close behind** (both feed a Cerbo
@@ -102,7 +105,7 @@ Appears on the network as an **alternator/charger** device:
 So a chart-plotter or Victron GX shows W / A / V, charge state, active profile, the
 binding ceiling, temperatures, and faults — natively.
 
-## 3. What it receives (control in)
+## 3. What it receives (control in) — **V2 scope** (PROJECT_PLAN §1.1)
 
 | Source | Frames | Used for |
 |---|---|---|
@@ -125,10 +128,12 @@ The single shunt can be battery- or alternator-side:
   charge-exit and Ah-based revert are fully armed.
 - **Alternator-side:** with loads between alternator and battery, alternator current ≠
   battery current, so local tail logic is **disarmed** — but a battery-side current from
-  an **external N2K battery monitor** re-arms it. The regulator states this at commissioning
-  rather than letting the ambiguity ride.
+  an **external N2K battery monitor** re-arms it *(that re-arm path is CAN-IN, so **V2**;
+  in V1 an alt-side shunt means tail exit stays disarmed — battery-side is the V1
+  recommendation)*. The regulator states this at commissioning rather than letting the
+  ambiguity ride.
 
-## 5. Multi-regulator sync
+## 5. Multi-regulator sync — **V2 scope** (PROJECT_PLAN §1.1)
 
 Twin engines / twin alternators coordinate over the shared bus (leader/follower): shared
 stage state, **load-sharing in Watts**, and one combined tail-exit decision — so two

@@ -43,7 +43,7 @@ constrain the code.
 | `CLIENT_CONNECTIVITY.md` | Programming/firmware/monitoring across PC/Mac/iOS/Android over USB+CAN (decision) | ✅ |
 | `QUICK_START.md` | Get-going guide (flash, connect, pick profile, run) | 🔨 draft |
 | `USER_MANUAL.md` | User manual + algorithm explanation (how the regulator decides) | 🔨 draft |
-| `CAN_INTEGRATION.md` | CAN/NMEA2000 integration (Tx telemetry, Rx BMS/DVCC/engine, sync) | 🔨 draft |
+| `CAN_INTEGRATION.md` | CAN/NMEA2000 integration (Tx telemetry = V1; Rx BMS/DVCC/engine + multi-unit sync = **V2**, §1.1) | 🔨 draft |
 | `OPEN_SOURCE.md` | Project overview, architecture, provenance, build/test, contributing | 🔨 draft |
 | `TEST_PLAN.md` | see deliverable #13 | ✅ assembled from §8/§1/§2 (2026-07-26) |
 | `DECISION_6A_CONFIG_STRATEGY.md` | Decision #6a ADR (config strategy) | ✅ **ACCEPTED: B — clean break** (owner, 2026-07-26); app translates stock dumps |
@@ -235,7 +235,7 @@ settles most of them):
 | 7 | Update/rollback/backup/recovery | `FLASH_AND_RECOVERY.md` (+ §3) | M1 | ⬜ |
 | 8 | Client app | **WebSerial/WebUSB web app** (PC/Mac/Android: program+monitor+firmware, one codebase) + native `tools/ws500ctl/` CLI (scripting/CI/flash). iOS = monitor via CAN/VRM only. See `CLIENT_CONNECTIVITY.md` | M4 | ⬜ |
 | 9 | **CAN Tx telemetry (NMEA2000 → Cerbo)** | **Firmware side ✅ 2026-07-27 (GH#18)**: pure encoders for the §2 PGN set (127508/127506/127488/127750, 126983/126985 alerts with plain-language text, 126996/126998, proprietary fast-packet) + pure ISO 11783-81 **address claim** (NAME, contest/yield/defend, null-address exhaustion) + pure **Tx cadence engine** + bxCAN glue @250 kbit/s (drop-not-block ring, real `ESR.BOFF` → §7 R6 budget). 241 host checks. **Bench-pending**: real-bus enumeration + how a Cerbo categorizes the device (§8 caveat); [SPEC-SIGNOFF] on device class/function, preferred address, DB version, LEN | **M3** | ✅ fw side |
-| 10 | CAN Rx for control | **First slice ✅ 2026-07-27**: the §1 dialect-neutral inbound interface (`control/bms_rx.c`) + the CAN-BMS/REC/JK 11-bit frame set (0x351 CVL/CCL/DCL, 0x355 SOC/SOH, 0x356 V/I/T, 0x35A alarms), per-signal staleness with a **declared loss-of-signal fallback** (`CTRL_FAULT_LOST_BMS`, never-seen ≠ went-silent), CCL(A)→W on pack voltage, alarms force the ceiling to 0 W. Wired to `bms_ccl_w` / `soc_pct` / `ext_faults`; `control/` core untouched. 56 host checks. **⛔ Two hard preconditions before BMS control-in is enabled against a real pack** (safety review 2026-07-27): **(a)** a **CVL consumer** — CVL is decoded and exposed but `ctrl_ceilings_t` is Watts-only, so a BMS charge-*voltage* limit is currently NOT enforced (the current limit is), and **(b)** **pre-disconnect** handling, still `[SPEC-GAP]` (no verified bit in this frame set) — without both, a BMS's only remaining protections against us are its alarm (→ 0 W, handled) and opening its contactor, which is the load-dump event §6.3 exists to prevent. Also open: a **`bms_required` config flag** — a BMS that is dead at power-on is currently indistinguishable from "no BMS wired" and raises no fault. **Remaining**: those three, plus Victron DVCC-via-GX, J1939 engine RPM, N2K 127508/127506 ingestion. Vendor frame layouts are `[SPEC-SIGNOFF]`/bench-pending — reconstructed from public CAN-BMS docs, no datasheet or unit to verify against | M5 | 🔨 |
+| 10 | CAN Rx for control — **DEFERRED TO V2** (owner, 2026-07-28; see §1.1) | **Entire CAN-IN scope moves to V2**: BMS control-in, BMS pre-disconnect, Victron DVCC-via-GX, external battery-monitor V/I (N2K 127508/127506) ingestion, J1939 engine RPM, multi-WS500 sync. The **first slice stays in-tree** (✅ 2026-07-27: §1 dialect-neutral inbound interface `control/bms_rx.c` + CAN-BMS/REC/JK 11-bit frames 0x351 CVL/CCL/DCL, 0x355 SOC/SOH, 0x356 V/I/T, 0x35A alarms; per-signal staleness with a **declared loss-of-signal fallback** — `CTRL_FAULT_LOST_BMS`, never-seen ≠ went-silent; CCL(A)→W on pack voltage; alarms → 0 W; wired to `bms_ccl_w` / `soc_pct` / `ext_faults`; 56 host checks) but is **not to be enabled on hardware in V1**. **One V1 task remains: a default-off gate** — `can_n2k.c` currently runs the BMS decoder unconditionally ("always live, no enable gate"), so a V1 unit on a bus with a chattering BMS would act on its ceilings. The **⛔ hard preconditions from the 2026-07-27 safety review carry over unchanged as V2 entry criteria**: **(a)** a **CVL consumer** — CVL is decoded/exposed but `ctrl_ceilings_t` is Watts-only, so a BMS charge-*voltage* limit is NOT enforced (the current limit is); **(b)** **pre-disconnect** handling, still `[SPEC-GAP]` (no verified bit in this frame set) — without both, a BMS's only protections against us are its alarm (→ 0 W, handled) and opening its contactor, the load-dump event §6.3 exists to prevent; **(c)** a **`bms_required` config flag** — a BMS dead at power-on is indistinguishable from "no BMS wired" and raises no fault. Vendor frame layouts remain `[SPEC-SIGNOFF]`/bench-pending — reconstructed from public CAN-BMS docs, no datasheet or unit to verify against | **V2** (was M5) | ⬜ V2 (fw slice in-tree, to be gated off) |
 | 10a | **RV-C Tx dialect** (+ RBM election) | **Firmware side ✅ 2026-07-27**: pure `rvc_encode.c` (CHARGER_STATUS, CHARGER_STATUS_2, DC_SOURCE_STATUS_1/2/3 — all single-frame, no fast-packet) + `rvc_sched.c` (cadence + **RBM election**: DC_SOURCE DGNs defer to a higher-priority master, CHARGER_STATUS never gated) over the same snapshot; dialect selector in `can_n2k.c` defaults **RV-C off** (driver state, no config-schema bump — TODO(GH#10)). 105 host checks. **⚠ Open before enabling on a real bus:** evidence says RV-C ADDRESS_CLAIM is DP=1 (`0x1EE00`), not J1939's `60928` as implemented — see the `[SPEC-SIGNOFF]` in `rvc_sched.h`. Also bench-pending: device class/function (30/129 are an inverter-charger's codes), industry group 0, current/temp scalings | M3 (close behind N2K) | ✅ fw side |
 | 11 | CAN docs | `CAN_INTEGRATION.md` | M3/M5 | 🔨 draft |
 | 12 | User documentation | `USER_MANUAL.md` (install, config, LED codes, troubleshooting) | M6 | 🔨 draft |
@@ -248,6 +248,39 @@ settles most of them):
 | 19 | **Emulation harness** | Renode model (STM32F072 + peripherals + INA stub) for hardware-free dev/CI; part of the §8 virtual-first strategy with the SIL plant sim (8.1). ✅ **CI-green 2026-07-26**: `renode/` harness boots the real ELF, `ctrl_tick` liveness verified in the `emulation` job. V6 stock-trace use still ⬜ | M0→M1 | ✅ |
 | 20 | **Telemetry / logging** | **USB half ✅ 2026-07-27**: MIT CDC-ACM transport (ST middleware rejected, SLA0044) + 1 Hz JSON telem line + telem-get with the §7 diag surfaces; caps ["cfg","telem"]. Bench-pending: real-host enumeration; release: permanent PID. **CAN half ✅ 2026-07-27** — #9's proprietary fast-packet carries the full snapshot (field effort, binding source + ceiling, temps, RPM state, active profile, fault bits) at 1.5 s. Remaining: surface `can_n2k_bus_off_count()` / `can_n2k_tx_dropped_count()` in the telemetry line (TODO(GH#10)) | M4–M5 | 🔨 |
 | 21 | **Robustness / error reporting** | §7 R0–R6 ✅ **implemented + CI-proven 2026-07-27** (GH#27 closed): funnel, windowed checkpoint IWDG, `.noinit` crash ring + reset-cause counters, two-stage M0 fault handlers, flash CRC (report-only) + stack painting + bottom-of-RAM stack, PVD, err budgets. Renode proves the M3 fault-path criterion in CI. Bench-pending: IWDG/PVD behavior, SRAM-parity + BOR option bytes (manual, M1-adjacent); telemetry surface with #20 | M3–M4 | ✅ fw side |
+
+### 1.1 V2-deferred scope (owner decision, 2026-07-28)
+
+**All CAN-IN (control inputs over CAN) is out of V1** and moves to V2:
+
+- **BMS control-in** (CAN-BMS/REC/JK 0x351/0x355/0x356/0x35A + Victron BMS paths) —
+  ceilings, SOC, alarms into arbitration.
+- **BMS pre-disconnect handling** (soft field ramp before contactor opening).
+- **Victron DVCC via GX/Cerbo** (CVL/CCL/DCL).
+- **Victron / external battery-monitor V & I ingestion** (N2K 127508/127506 —
+  battery-side current truth for tail-exit re-arm).
+- **J1939 engine RPM / coolant** (stator RPM is the sole V1 RPM source).
+- **Multi-WS500 coordination/sync** (leader/follower load sharing).
+
+CAN **Tx** (N2K + RV-C telemetry out, #9/#10a) **stays in V1** — read-only broadcast,
+cannot affect the loop.
+
+**V1 consequences of the deferral** (each already consistent with the specs' fallback
+posture, now the *only* posture in V1):
+
+1. Arbitration runs on **profile + hardware limits only**; the BMS/DVCC ceilings simply
+   aren't in the min() (CAN_INTEGRATION.md §0 stance, now V1-final).
+2. **The committed #10 slice needs a default-off gate** — `can_n2k.c` feeds the decoder
+   unconditionally today; small firmware task, tracked in #10's row.
+3. **Temp-comp battery-temp sourcing** (V8: battery temp arrives via CAN/BMS, PA3 is FET
+   temp) has **no V1 source** — CONTROL_SPEC §5.1 must treat battery-temp compensation
+   as V2 (or harness-input-only if one is ever verified). LFP temp *window* enforcement
+   from local sensors is unaffected.
+4. **Tail-current exit with an alternator-side shunt stays disarmed** in V1 (no external
+   N2K monitor to re-arm it) — battery-side shunt is the V1 recommendation
+   (CAN_INTEGRATION.md §4).
+5. The 2026-07-27 safety-review preconditions (CVL consumer, pre-disconnect,
+   `bms_required`) become **V2 entry criteria**, not M3/M5 blockers.
 
 ## 2. Milestones (safety and recovery come before any flash write)
 
@@ -303,8 +336,9 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
   loss-of-signal fallback the spec demands. **RV-C Tx (#10a)** landed the same
   day.
   **Remaining:** INA2xx I²C transfers 🔨 (bus caveat GH#36 — bench-gated, and
-  test-fw's `i2cscan` is now the tool for it), the **CVL consumer gap** #10
-  surfaced, inner-loop gain tuning (GH#34), and bench bring-up (§7 robustness
+  test-fw's `i2cscan` is now the tool for it), the **#10 default-off CAN-IN
+  gate** (§1.1 — the CVL-consumer gap itself moved to V2 with the rest of
+  CAN-IN), inner-loop gain tuning (GH#34), and bench bring-up (§7 robustness
   layer #21 is done, CI-proven 2026-07-27). *Exit:* closed-loop CV hold on the
   bench supply into a dummy load, with fault cutoff verified; IWDG active; an induced
   HardFault provably lands in safe state + crash record + clean reboot.
@@ -312,7 +346,8 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
   `ws500ctl` read/write/verify, FW update via CLI, telemetry stream (#20). *Exit:* config
   round-trips; FW updates via `ws500ctl`; config survives an update.
 - **M5 — CAN Tx / NMEA2000.** Status PGN set, RBM participation, `CAN_TECHNICAL_SPEC.md` +
-  user doc. *Exit:* regulator telemeters valid PGNs and participates in RBM on a real bus.
+  user doc. *(Tx only — CAN-IN / Rx control was #10's other half here and is now V2, §1.1.)*
+  *Exit:* regulator telemeters valid PGNs and participates in RBM on a real bus.
 - **M6 — Real-alternator trials + release.** Staged live testing per §5 exit ladder; user
   guide; **versioned tagged release** with CHANGELOG. *Exit:* driven alternator charges a
   bank under supervision; `v0.1.0` tagged.
