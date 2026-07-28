@@ -9,24 +9,28 @@ SIL gauntlet) exercises the *pure control core* against a plant model, §8.2
 proves the *whole firmware image* survives its own bring-up and keeps its 10 ms
 control loop turning on the actual target peripherals.
 
-> ### Status: liveness case CI-green; fault case authored against a probed emulator
-> The liveness test has been green in CI since 2026-07-26. The fault-path case
-> (added 2026-07-27 with issue #27) was written against **Renode 1.16.1 run
-> locally** — the two emulator behaviours it depends on were probed directly
-> with a hand-built flash image (see [Fault-path test](#fault-path-test-project_plan-7-r3--issue-27--m3-exit-criterion)),
-> and the Robot file parses under the same `TestSuiteBuilder` renode-test uses.
-> What is still unproven locally is the firmware side: there is no ARM
-> toolchain on the authoring machine, so the ELF the test loads has never been
-> built here. **The first CI run is the real test of the fault case.**
+> ### Status: four cases, all green locally against a real build
+> The liveness and fault-path cases have been CI-green since 2026-07-26/27.
+> Two more were added and validated locally (`renode-test renode/ws500.robot`,
+> Renode 1.16.1 portable, against a real `ws500-openfw.elf`, repeatedly green):
+> **`IWDG Starvation Resets The Regulator`** (§7 R1, closes the §8.2 "watchdog
+> starvation" item — `renode/iwdg-stub/iwdg_stub.py`) and **`I2C Stubs Answer
+> Real Sensor And Config Reads`** (closes the §8.2 "INA226/EEPROM I²C device
+> stubs" item — `renode/i2c-stubs/`). Both stub directories' own file headers
+> record a real, previously-shipped bug each caught and fixed (a process
+> crash and a silently-wrong-value bug, respectively) — read them before
+> touching either stub. **DFU-adjacent boot behavior is still open.**
 
 ## Files
 
 | File | Role |
 |------|------|
-| `ws500f072.repl` | Platform. Thin overlay on Renode's stock `platforms/cpus/stm32f072.repl` (128 KB flash @ `0x08000000`, 16 KB SRAM @ `0x20000000` — matches the linker script). Documents the HSI48, BOOT0-mirror and IWDG gaps. |
+| `ws500f072.repl` | Platform. Thin overlay on Renode's stock `platforms/cpus/stm32f072.repl` (128 KB flash @ `0x08000000`, 16 KB SRAM @ `0x20000000` — matches the linker script). Documents the HSI48, BOOT0-mirror and IWDG gaps. The IWDG and I2C device stubs below are attached per-test, not here, so the liveness/fault cases keep seeing the stock inert Tag/NACK behaviour. |
 | `ws500-openfw.resc` | Interactive boot script: create machine, load platform, `LoadELF`, `start`. Parameterised by `$elf` (default `build/ws500-openfw.elf`). |
-| `ws500.robot` | The CI tests (Robot Framework): whole-firmware liveness, and the §7 R3 fault-path case described below. |
+| `ws500.robot` | The CI tests (Robot Framework): whole-firmware liveness, the §7 R3 fault-path case, the §7 R1 IWDG-starvation case, and the I2C sensor/config-store case — all four described below. |
 | `ws500-stock-trace.resc` | **Diagnostic, not CI.** Boots the *stock* binary and logs RCC/TIM1/ADC/I2C bus traffic for PROJECT_PLAN §0.6 **V6**. |
+| `iwdg-stub/iwdg_stub.py` | A real, virtual-time-driven IWDG model (Renode ships none) — see its own header for the `ScheduleAction`/`RequestReset` mechanism and why `sysbus.cpu Pause` was tried and rejected. |
+| `i2c-stubs/*.py` | INA226 (0x40) and 24C16 EEPROM (0x50-0x57) device stubs backing `Mocks.DummyI2CSlave`. See their headers' WIRE-PROTOCOL MODEL sections for the `ReadRequested`-based fix to a real queued-reply bug the first version shipped with. |
 
 ## Renode models used
 
@@ -136,15 +140,17 @@ the real emulator before the test was written.
 
 ### What this test cannot prove
 
-- **The IWDG (§7 R1) is not emulated at all.** The platform maps IWDG as a
-  silent `Tag` region: key/prescaler/reload/window writes are logged and
-  discarded, `SR` reads back 0, and no reset is ever generated. So the harness
-  can confirm the watchdog code *runs* (and that its bounded `SR` waits do not
-  hang — which is a real risk on a stubbed peripheral), but it cannot confirm
-  that starving the checkpoints resets the part, nor that the window rejects an
-  early kick. Those need silicon: they are bench items for M3, and the
-  `renode/README.md` gap list is the record of that. A hand-written IWDG model
-  would be the alternative if starvation ever needs CI coverage.
+- **The IWDG (§7 R1) is not emulated in THIS test.** `ws500f072.repl`'s stock
+  platform still maps IWDG as a silent `Tag` region here (key/prescaler/
+  reload/window writes logged and discarded, `SR` reads back 0, no reset ever
+  generated), so the fault-path case above only confirms the watchdog code
+  *runs* and its bounded `SR` waits do not hang. **Starvation-causes-reset IS
+  now covered**, just not by this test: see `IWDG Starvation Resets The
+  Regulator` below and `iwdg-stub/iwdg_stub.py`, which attaches a real
+  virtual-time-driven IWDG model for that one case only. Still open, and still
+  a silicon-only item: whether the *window* correctly rejects an early kick —
+  `iwdg_stub.py`'s own header explains why that was deliberately left
+  unmodelled even in the new test.
 - **The CPU's HardFault dispatch** — see fact 1 above. `HardFault_Handler`'s
   stage-1 body is byte-identical (same macro) to `NMI_Handler`'s, so what the
   test does not exercise is the emulator's, not the firmware's.
@@ -154,6 +160,47 @@ the real emulator before the test was written.
   loads the `.elf`; `scripts/embed_crc.py` patches the `.bin`. `integrity.c`
   reports `INTEGRITY_CRC_UNPATCHED` (a distinct, non-fatal status) rather than
   a mismatch, which is exactly why the boot-time check is report-only.
+
+## IWDG-starvation test (PROJECT_PLAN §7 R1 · §8.2 "watchdog starvation")
+
+`IWDG Starvation Resets The Regulator` closes the one item the fault-path
+test above explicitly cannot cover: proving that `watchdog.c`'s checkpoint-
+kicked IWDG actually resets the MCU when it stops being fed, rather than the
+firmware spinning on with the field energised. Renode ships no IWDG model at
+all, so `iwdg-stub/iwdg_stub.py` supplies one — armed off whatever
+`PR`/`RLR`/`WINR` `watchdog_init()` actually programs (§7 R1: 100.8 ms
+nominal), not a value the test invents, and using `Machine.ScheduleAction` /
+`Machine.RequestReset()` (reflected off the live Renode object, not
+documented in any shipped example) to fire a real reset after that period
+elapses with no kick. Starvation itself is induced by writing a test-only
+control register the stub exposes (`iwdg_stub.py`'s header explains why —
+`sysbus.cpu Pause` was tried first and found to be a transient pause-then-
+resume, not a sustained halt). The post-reset liveness check reuses the
+fault-path test's `AddHook`-after-`LogFunctionNames`-dies technique, because
+`Machine.RequestReset()` kills `LogFunctionNames` exactly like `SYSRESETREQ`
+does (confirmed by direct probing for this reset path too).
+
+## I2C device-stub test (PROJECT_PLAN §8.2 "I2C device stubs")
+
+`I2C Stubs Answer Real Sensor And Config Reads` attaches an INA226
+(`i2c-stubs/ina226_stub.py`, I2C1 0x40) and an eight-block 24C16 EEPROM
+(`i2c-stubs/eeprom24c16_stub.py`, I2C2 0x50-0x57, one `Mocks.DummyI2CSlave`
+per block-select address) so `ina2xx.c` and `eeprom24c16.c` run against
+something that answers instead of NACKing/timing out. It asserts two
+different things, deliberately: that the stubs are *exercised* (their own log
+lines appear, and `Unknown slave at address` — meaning some transaction found
+nothing to answer it — is registered as an immediate test failure), and,
+independently, that the *values reaching the firmware are correct* — read
+back directly from `ina2xx.c`'s own `s_current_a`/`s_bus_v` RAM cache via
+`sysbus GetSymbolAddress` + `ReadDoubleWord`, not just inferred from the
+stub's own log text. That second check is not redundant: the version of
+these stubs this test was first built against passed the "exercised" half
+while silently returning WRONG values (0.2 A / 2.5 V instead of the intended
+50.0 A / 24.0 V) to the driver, from a queued-reply timing bug in how
+`Mocks.DummyI2CSlave.EnqueueResponseBytes` was being driven. Both stub files'
+WIRE-PROTOCOL MODEL header sections have the full post-mortem and the fix
+(Renode's `ReadRequested(count)` event, not documented in any shipped
+example, instead of queuing a reply speculatively off an address-only write).
 
 ## Running it
 

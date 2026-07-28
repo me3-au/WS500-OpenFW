@@ -1,0 +1,15 @@
+# renode-test run artifacts (renode/README.md "Running it"): regenerated on
+# every `renode-test renode/ws500.robot` invocation, so they don't belong in
+# version control. This file is scoped to renode/ deliberately -- the
+# repo-root .gitignore covers unrelated build/tooling output and is owned
+# separately.
+log.html
+report.html
+robot_output.xml
+# --save-logs (default: onfail) and the Robot "Create Snapshot Of Failed
+# Test" hook write here whenever a case fails locally; same reasoning.
+logs/
+snapshots/
+# renode-test also writes results-<suite>.robot.xml next to the suite when
+# invoked with -r; same category as the artifacts above.
+results-*.xml
