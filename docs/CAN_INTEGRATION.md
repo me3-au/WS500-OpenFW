@@ -11,15 +11,22 @@
 > glue (`Core/can_n2k.c`) are written and host-tested in CI — but have **never
 > run on a real bus**, so both are "built, unverified", not "working". RV-C is
 > **disabled by default**; enabling it is a driver-level call today, not yet a
-> config field. **Before anyone enables it, resolve the open question flagged
-> in `control/Inc/rvc_sched.h`: whether RV-C address claim is DP=1 (`0x1EE00`)
-> rather than the J1939 `60928` currently implemented** — if it is, RV-C claim
-> frames go out where no RV-C node will look. §3 (Rx / control-in) and §5
+> config field. **Spec-closure 2026-07-28 (§9): the address-claim
+> question is RESOLVED — RV-C ADDRESS_CLAIM is `60928`/DP=0, exactly as
+> implemented** (the `0x1EE00` fear from a vendor guide is refuted by the RV-C
+> spec text itself, now read: RVIA "RV-C Specification Full Layer" rev.
+> 2025-07-31). The same read found seven identity/scaling defects that are
+> **blocking before either dialect's Tx meets a real bus** — see the §9.2
+> table (N2K device function 140→141, "Engine"→"DC Generator/Alternator";
+> RV-C instance 0→1, device priority 100→80, CHARGER_STATUS current offset
+> encoding, DC_SOURCE_STATUS_1 current sign, percent scale 0.4→0.5 %/bit,
+> preferred address 35→128). §3 (Rx / control-in) and §5
 > (multi-regulator sync) remain target behaviour.
-> The §8 ingestion caveat is the open question that matters most:
+> The §8 ingestion caveat remains the open question that matters most:
 > whether a real Cerbo actually *categorizes and displays* this device is
-> bench-pending, and the device class/function codes it turns on are marked
-> `[SPEC-SIGNOFF]` in `Core/Src/can_n2k.c` until then.
+> bench-pending (#18 N2K, #32 RV-C). The identity codes it turns on are now
+> spec-dispositioned in §9, including verdicts for the values living in
+> `Core/Src/can_n2k.c` (which the docs/spec pass could not edit).
 
 The regulator has **one** CAN bus (bxCAN on the WS500). Over that single bus it speaks
 several dialects at once — NMEA 2000, J1939, Victron VE.Can, RV-C, and CAN-BMS frames —
@@ -145,8 +152,9 @@ RV-C is the **RV industry's** CAN standard (motorhomes/trailers), as NMEA 2000 i
   single port; only Venus/Ekrano GX have two). So **an RV owner whose Cerbo runs the RV-C
   profile will only see us if we speak RV-C.** RV-C is therefore *co-important with N2K*,
   not an RV-only afterthought.
-- **RV-C Tx** emits its own DGNs: `CHARGER_STATUS`, `DC_SOURCE_STATUS_1/2/3` (V/A/T/SoC),
-  `ALTERNATOR_STATUS`.
+- **RV-C Tx** emits its own DGNs: `CHARGER_STATUS`, `CHARGER_STATUS_2`,
+  `DC_SOURCE_STATUS_1/2/3` (V/A/T/SoC). *(An earlier draft listed
+  `ALTERNATOR_STATUS`; no DGN of that name exists in the 2025 RV-C spec — §9.)*
 - **RBM (Remote Battery Master):** a priority-based *election* — only the highest-
   priority device broadcasts battery (`DC_SOURCE`) data. If we transmit RV-C battery data
   we must implement defer-to-higher-priority behavior (the stock WS500 supported this).
@@ -161,6 +169,96 @@ RV-C is the **RV industry's** CAN standard (motorhomes/trailers), as NMEA 2000 i
 **Decision (v1):** build the **N2K encoder first** (library in hand), **RV-C close behind**
 as the second encoder over the same snapshot — both are real paths to a Cerbo depending on
 its port profile. Verify actual GX display on hardware for each.
+
+## 9. Network-identity spec closure (2026-07-28)
+
+The CAN network-identity `[SPEC-SIGNOFF]` markers were disposed on 2026-07-28
+against primary sources: the official RV-C specification (RVIA, **"RV-C
+Specification Full Layer", rev. July 31 2025** — public download from rvia.org,
+cited rather than vendored for copyright), the NMEA 2000 device class & function
+codes v2.00 (machine-readably mirrored in canboat's `DEVICE_FUNCTION` table),
+and the linuxkidd/rvc-monitor-py decoder (independent unit-conversion
+cross-check). Per-field detail lives in `control/Inc/rvc_sched.h`,
+`control/Inc/rvc_encode.h` and `control/Inc/n2k_encode.h`; this section records
+the verdicts for constants living in files the spec-closure pass could not edit
+(`Core/Src/can_n2k.c`, `control/Src/*.c`) and the follow-up work.
+
+### 9.1 ADDRESS_CLAIM data page — RESOLVED: implementation correct
+
+RV-C's ADDRESS_CLAIMED DGN is **`EE00h` = PGN 60928, Data Page 0** (spec §3.3.2
+Table 3.3.2b; DGN dictionary "ADDRESS_CLAIMED EE00h 60928") — exactly what the
+reused `n2k_addrclaim.c` implements. The `0x1EE00`/DP=1 fear from the Xantrex
+guide is refuted; RV-C mirrors N2K's own structure (application DGNs on DP=1,
+network management on the inherited J1939 DP=0 PGNs). Do not fork
+`n2k_addrclaim.c`. Two real deltas were found instead (detail in
+`rvc_sched.h`'s file header): our claims use the J1939 `..EEFFxx` identifier
+form, which spec §4.3.1.2 explicitly tolerates (our Rx handles both forms and
+answers RV-C's directed address requests); and the preferred start address must
+move into the charger dynamic range (row 7 below).
+
+### 9.2 Verdicts requiring code changes — BLOCKING before the affected dialect's Tx is enabled on a real bus
+
+| # | Where | Today | Verdict | Authority |
+|---|---|---|---|---|
+| 1 | `Core/Src/can_n2k.c` `N2K_DEVICE_FUNCTION` | 140 (comment calls it "Alternator") | **141** — in class 35, 140 = "Engine", 141 = "DC Generator/Alternator"; as-is an MFD lists us as an engine | NMEA class/function codes v2.00 (canboat) |
+| 2 | `control/Src/rvc_sched.c` `RVC_INSTANCE_DEFAULT` | 0 | **1** — instance 0 = "Invalid" in every emitted DGN; DC instance 1 = Main House Battery Bank | RV-C Tables 6.5.2b / 6.20.8b / 6.20.9b |
+| 3 | `control/Inc/rvc_sched.h` `RVC_OUR_DEVICE_PRIORITY` | 100 | **80** — spec tier list: 80 = Charger; 100 = Inverter/Charger (we are no inverter) | RV-C Table 6.5.2b |
+| 4 | `control/Src/rvc_encode.c` CHARGER_STATUS charge current | plain unsigned 0.05 A/bit | **offset-encoded**, raw 0x7D00 = 0 A — a compliant decoder reads today's +12 A as −1588 A | RV-C Table 5.3 |
+| 5 | `control/Src/rvc_encode.c` percent fields (CHARGER_STATUS byte 5) | 0.4 %/bit | **0.5 %/bit** (uint8, 0–125 %) | RV-C Table 5.3 |
+| 6 | `control/Src/rvc_encode.c` DC_SOURCE_STATUS_1 current | `amps_batt` unnegated (+ = charging) | **negate** — RV-C: positive = flow FROM the source (discharge); today a charging bank reads as discharging | RV-C Table 6.5.2b |
+| 7 | `Core/Src/can_n2k.c` `RVC_PREFERRED_ADDR` | 35 (in the reserved 0–63 DSA space) | **128** — charger dynamic range is 128–143; up-counting from an in-range start is a permitted technique | RV-C §3.3.2, Table 7.2 |
+
+Non-blocking refinements for the same pass: CHARGER_STATUS voltage/current are
+spec-defined as **control (desired)** values — the measured pair belongs in
+CHARGER_STATUS_2 (we currently send measured in both); and the RV-C NAME's
+"class 30 / function 129" lands in what §3.3.3 defines as an optional
+**Compatibility Field, normally 0** — RV-C NAMEs have no device class/function
+semantics, so the "inverter-charger's codes" concern is moot (RV-C
+categorisation is by transmitted DGNs, not NAME). Keep 30/129 (harmless, mimics
+a real product) or zero the field; decide from what the Cerbo does at the #32
+bench session.
+
+### 9.3 Signed off, no code change
+
+- **N2K**: device class 35 "Electrical Generation" (correct for function 141);
+  industry group 4 marine (settled); preferred address 34
+  (arbitrary-address-capable — only affects first-boot races); `n2k_version`
+  2100 and LEN 1 (informational; LEN 1 claims 50 mA — the unit is
+  battery-powered, so this is conservative; re-measure/zero at bench if anyone
+  cares); manufacturer code 2046 (top-of-range hobby convention, shows as
+  "unknown manufacturer" on displays); encoder saturation policy
+  (last-valid-code peg).
+- **RV-C**: DGN numbers (already settled); CAN priority 6 for every emitted DGN
+  (Tables 6.5.2a/6.5.3a/6.5.4a/6.20.8a/6.20.9a); NAME industry-group bits = 0
+  (spec-mandated "Always 0" — upgraded from vendor-table evidence to settled);
+  all voltage scalings (u16 0.05 V/bit) and temperature scalings (u8 1 °C
+  offset −40; u16 0.03125 °C offset −273); DC_SOURCE_STATUS_1 u32 current
+  offset raw 0x77359400 = 0 A (was the weakest constant in the file, now
+  verbatim Table 5.3); CHARGER_STATUS_2 existence + byte layout (§6.20.9 —
+  official, no longer "vendor convergence"); CHARGER_STATUS operating-state
+  enum; RBM defer timeout 1500 ms (firmware policy, 3× the spec's 500 ms gap);
+  cadences: CHARGER_STATUS 5000 ms (Table 6.20.8a), CHARGER_STATUS_2 500 ms
+  (Table 6.20.9a — disposes `rvc_sched.c`'s cadence `[SPEC-SIGNOFF]`),
+  DC_SOURCE_STATUS_1/2 500 ms (Tables 6.5.2a/6.5.3a). DC_SOURCE_STATUS_3 stays
+  unscheduled: the spec lists a 500 ms normal gap but our payload would be
+  100 % not-available; revisit when SOH/capacity data exists.
+- **N2K cadences** (`n2k_sched.c`): 126985 at 2.5 s and the proprietary PGN at
+  1.5 s stay firmware policy — no standard interval exists to cite; disposed as
+  engineering choices.
+
+### 9.4 Bench-pending — first-real-bus falsification list
+
+For **#18 (N2K)**: analyzer/Cerbo shows NAME class 35 / function 141 and
+categorises the device as alternator-family (after §9.2 row 1 lands);
+product-info strings and LEN render sanely; the proprietary 2046 fast-packet is
+ignored by third-party gear.
+For **#32 (RV-C)**: capture our ADDRESS_CLAIM and a Cerbo-in-RV-C-mode claim —
+expect DP=0 identifier forms `18EE00xx`/`18EEFFxx`; confirm a directed address
+request (request for `EE00h` sent to our address from SA 254) draws our claim;
+after §9.2 rows 2–7 land, confirm the Cerbo displays charger + DC-source data
+at instance 1 / priority 80 with sane V/A signs and magnitudes; observe whether
+NAME compatibility-field 30/129 vs 0 changes GX behaviour.
+
 
 ---
 

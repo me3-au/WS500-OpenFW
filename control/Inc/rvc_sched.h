@@ -12,50 +12,53 @@
  * PURE — no HAL, no allocation; all state lives in the caller-owned
  * rvc_sched_t.
  *
- * ---- Address claim: reused as-is, WITH A CONFIRMED CAVEAT --------------
- * PROJECT_PLAN §1 row 10a's own brief says RV-C's address claim is
+ * ---- Address claim: RESOLVED against RV-C spec text (2026-07-28) --------
+ * PROJECT_PLAN §1 row 10a's brief says RV-C's address claim is
  * "dialect-neutral" and reuses n2k_addrclaim.c unmodified on PGN 60928 (the
- * standard J1939/N2K Address Claim PGN), with only the NAME's
- * industry-group field differing per dialect. Core/Src/can_n2k.c follows
- * that instruction literally: a second n2k_ac_t runs the RV-C claim on PGN
- * 60928/59904, exactly like the N2K one.
+ * standard J1939/N2K Address Claim PGN); Core/Src/can_n2k.c does exactly
+ * that. An earlier reading of a vendor DGN guide (Xantrex 976-0452-01-01
+ * Rev B, "1EE00") suggested RV-C's own ADDRESS_CLAIM might live on Data
+ * Page 1 (0x1EE00), which would have put our claim frames on a 29-bit
+ * identifier no RV-C node watches. That fear is REFUTED from primary text:
+ * the spec itself (RVIA, "RV-C Specification Full Layer", rev. 2025-07-31,
+ * public download from rvia.org — cited, not vendored, for copyright;
+ * §3.3.2 Table 3.3.2b, and the §7 DGN dictionary entry "ADDRESS_CLAIMED
+ * EE00h 60928") defines the address-claimed DGN as EE00h = PGN 60928,
+ * Data Page 0 — exactly what n2k_addrclaim.c implements. RV-C mirrors
+ * NMEA 2000's own structure here: application DGNs live on DP=1, network
+ * management stays on the inherited J1939 DP=0 PGNs. The reuse-as-is
+ * decision stands; do NOT fork n2k_addrclaim.c.
  *
- * BUT: primary-source research for this deliverable (a real shipped RV-C
- * product's own DGN reference guide — Xantrex Freedom SW-RVC RV-C DGN
- * Reference Guide 976-0452-01-01 Rev B, §3.3.2 "Address Claimed
- * ADDRESS_CLAIM", DGN hex 1EE00) shows RV-C's OWN address-claim DGN is
- * 0x1EE00 (126464 decimal) — Data Page 1 — not J1939/N2K's 0x00EE00 (60928,
- * Data Page 0). Every other RV-C administrative/status DGN in that same
- * reference guide (17F00, 17C00, 17B00, 1FECA, 1FFFD, 1FFC7, ...) is
- * likewise DP=1, consistent with rvc_encode.h's own structural note: RV-C
- * appears to deliberately reserve the whole DP=1 page for itself, plausibly
- * so it can coexist on a bus bridged to a DP=0 J1939 chassis network
- * without PGN collisions.
+ * Two REAL deltas the same spec read surfaced (both TODO(GH#32); neither
+ * invalidates reusing n2k_addrclaim.c unmodified):
  *
- * [SPEC-SIGNOFF, the single most consequential one in this deliverable]: if
- * that primary-source reading is correct, reusing n2k_addrclaim.c unmodified
- * (hardcoded to PGN 60928/59904 via its own #defines, not parameters) means
- * this device's RV-C claim frames go out on the WRONG 29-bit CAN identifier
- * for a real RV-C bus — a real RV-C node would never see them, and an ISO
- * Request for RV-C's own admin DGN (plausibly 0x1EA00, DP=1-shifted from
- * 59904, though that value is NOT independently confirmed anywhere and is
- * pure extrapolation from the DP=1 pattern) would go unanswered.
+ * 1. Identifier form: RV-C broadcasts ADDRESS_CLAIMED with DGN-low = 00h
+ *    (ID ..EE00xx) where J1939/N2K send destination-global (..EEFFxx); our
+ *    reuse emits the EEFF form. Spec §4.3.1.2 tolerates this explicitly
+ *    ("broadcast of incidental messages using the EEFFh identifiers are
+ *    acceptable as long as the device correctly supports the EE00h
+ *    messages") — and our Rx side does support them: n2k_can_id_pgn()
+ *    zeroes the PS byte for PDU1, so claims/requests in either form parse
+ *    to 60928/59904, and n2k_ac_rx() answers RV-C's directed address
+ *    request (§3.3.2 Table 3.3.2a: a request for EE00h sent from SA 254
+ *    to the desired address — data 00,EE,00 → requested PGN 60928,
+ *    handled). Compliant as-is; emitting the EE00 form natively is
+ *    optional polish.
  *
- * This deliverable ships the literal instruction (reuse n2k_addrclaim.c
- * unmodified, PGN 60928/59904) rather than silently patching a shared,
- * already-CI-green, already-tested module on unverified-against-primary-text
- * evidence — n2k_addrclaim.h's PGN constants are #defines, not per-instance
- * parameters, so making them dialect-specific is a real (if small) change to
- * a file this deliverable was told not to touch. Given RV-C Tx is disabled
- * by default (Core/Src/can_n2k.c) and has never touched a real bus regardless,
- * getting this wrong costs nothing today — but it MUST be resolved (read the
- * actual RV-C §3.3 spec text, or capture a real RV-C bus with a Cerbo in
- * RV-C-profile mode) before RV-C Tx is ever enabled for real. If the DP=1
- * finding holds, the fix is to give n2k_ac_t its own claim/request PGNs as
- * init-time fields (a small, additive change — NOT a duplicate of the state
- * machine) rather than forking n2k_addrclaim.c.
+ * 2. Preferred start address: RVC_PREFERRED_ADDR (Core/Src/can_n2k.c) is
+ *    35, inside RV-C's reserved/static DSA space (Table 7.2: 0-63). A
+ *    charger-class device's preferred DYNAMIC range is 128-143 ("Power
+ *    Components" — the range Table 7.2 gives Converter #1/#2 and Charge
+ *    Controller). §3.3.2 permits the J1939-style start-low-and-count-up
+ *    technique n2k_addrclaim.c uses, but the START address must sit in
+ *    the device type's range — so 35 must become 128 before RV-C Tx is
+ *    ever enabled on a real bus (walking past 143 under contention is
+ *    fine; the spec's own fallback rules leave the range too).
  *
- * SPDX-License-Identifier: MIT
+ * bench-pending (GH#32): first real-bus session, capture our claim and a
+ * Cerbo-in-RV-C-profile claim (expect 18EE00xx/18EEFFxx forms, DP=0) and
+ * confirm a directed address request draws our claim — the spec read
+ * settles the encoding; the capture settles interop.
  */
 #ifndef WS500_RVC_SCHED_H
 #define WS500_RVC_SCHED_H
@@ -97,28 +100,28 @@ typedef struct {
 } rvc_rbm_t;
 
 /*
- * Our own DC_SOURCE_STATUS device-priority value. No RV-C spec text or bus
- * capture confirms a "correct" number for an alternator/engine-driven
- * charger specifically — the cited examples above are all house-battery
- * devices (inverter/charger, solar, AC charger, BMS). 100 (the
- * inverter/charger tier) is the closest functional analog: we are, like an
- * inverter/charger, a device that actively PUSHES current into the bank
- * rather than just observing it (unlike a passive shunt monitor), so we
- * adopt the same tier Victron's own dbus-rvc implementation uses for that
- * device class [SPEC-SIGNOFF: verify against a real installation with a
- * dedicated battery monitor present — if this device's reported priority
- * is set too high, it could win over a purpose-built BMS/shunt that should
- * be the actual source of truth for SOC/capacity data we don't have anyway]. */
+ * Our own DC_SOURCE_STATUS device-priority value. RESOLVED (2026-07-28)
+ * from spec text: RV-C Table 6.5.2b enumerates the tiers — 120 battery
+ * SOC/BMS device, 100 inverter/charger, 80 CHARGER, 60 inverter, 40
+ * voltmeter/ammeter, 20 voltmeter, 0 "no priority, always reporting" —
+ * and adds "designers should consider making this value configurable".
+ * An engine-driven alternator regulator is a charger, not an
+ * inverter/charger, so the earlier 100 guess (inverter/charger tier) is
+ * REVISED: the shipped value must be 80 (code change TODO(GH#32) — this
+ * pass is spec/comments only, so the define below still reads 100 until
+ * that lands). 80 keeps us below a BMS/battery monitor (120 — which
+ * should own SOC/capacity truth) and above inverters and passive meters:
+ * exactly the arbitration shape the RBM election wants. */
 #define RVC_OUR_DEVICE_PRIORITY   100u
 
 /*
- * "Has a higher-priority competitor gone quiet" timeout. Neither reference
- * source states an explicit RV-C-mandated defer/resume timing (only the
- * arbitration OUTCOME — highest priority wins — is documented); this value
- * is firmware policy, not a cited RV-C interval [SPEC-SIGNOFF], chosen as
- * 3x the 500 ms DC_SOURCE_STATUS broadcast period (Xantrex reference guide)
- * — the same "a few missed periods means gone, not just briefly delayed"
- * margin common to CAN keepalive conventions generally. */
+ * "Has a higher-priority competitor gone quiet" timeout. RV-C specifies
+ * the arbitration OUTCOME (highest device priority broadcasts) and the
+ * 500 ms normal broadcast gap for DC_SOURCE_STATUS_1/2 (Tables
+ * 6.5.2a/6.5.3a) but no defer/resume timing, so this remains firmware
+ * policy (signed off 2026-07-28): 3x the spec's 500 ms broadcast period —
+ * the usual "a few missed periods means gone, not just briefly delayed"
+ * CAN keepalive margin. */
 #define RVC_RBM_TIMEOUT_MS   1500u
 
 /* Seed the election state. */

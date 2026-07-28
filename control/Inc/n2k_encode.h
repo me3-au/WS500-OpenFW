@@ -20,7 +20,10 @@
  *   - "not available": 0xFF (u8), 0xFFFF (u16), 0x7FFF (s16), 0xFFFFFFFF…;
  *   - out-of-range values SATURATE at the last valid code (u8 0xFC,
  *     u16 0xFFFC, s16 ±0x7FFC/−32768) rather than reading as "missing" —
- *     a pegged gauge is more honest than a blank one [SPEC-SIGNOFF];
+ *     a pegged gauge is more honest than a blank one (signed off
+ *     2026-07-28: house policy — N2K reserves the per-width codes above
+ *     the saturation points for error/reserved/not-available, so the last
+ *     plain value is the correct peg);
  *   - unused/reserved bits transmit as 1s (J1939 convention).
  *
  * SPDX-License-Identifier: MIT
@@ -53,9 +56,13 @@ typedef struct {
 
 /* Proprietary fast-packet header (CAN_INTEGRATION.md §2 last row): 11-bit
  * manufacturer code + 2 reserved bits (1s) + 3-bit industry group (4 =
- * marine). No official NMEA manufacturer code exists for this open project;
- * 2046 is the top of the code space and conventionally used by hobby/open
- * devices [SPEC-SIGNOFF]. */
+ * marine). No official NMEA manufacturer code exists for this open project
+ * (fact — codes are assigned to NMEA members); 2046 is the top of the
+ * code space and the hobby/open-device convention. Signed off 2026-07-28
+ * as an engineering choice: displays show "unknown manufacturer", and only
+ * consumers matching code 2046 parse our proprietary PGN — collision with
+ * another hobby device is conceivable and harmless for Tx-only telemetry
+ * (bench-pending, GH#18: confirm a Cerbo ignores it cleanly). */
 #define N2K_PROP_MFG_CODE   2046u
 #define N2K_PROP_INDUSTRY   4u
 /* Proprietary-B fast-packet PGN range starts at 130816; we use the first. */
