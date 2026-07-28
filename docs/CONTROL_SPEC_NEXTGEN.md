@@ -664,6 +664,30 @@ Rules:
   and estimated rotor temp on ⟦future-hw⟧). "Field 80 %" means the same thing
   on any system voltage: 80 % of what the rotor can give.
 
+#### 5.1.1 Clamp-supply plausibility guard — constants signed off (2026-07-28, GH#34)
+
+`duty_max = rotor_v / V_supply` is only as trustworthy as the voltage it
+divides by: an in-range-but-false-LOW reading loosens the clamp onto the true
+(higher) bus — the §8.4 property sweep walked exactly such a lie to 1.8× rated
+rotor voltage before the floor below existed. `ctrl_vsup_guard()`
+(`control/Src/field.c`) vets the clamp voltage; its constants (declared in
+`control/Inc/field.h`, previously `[SPEC-SIGNOFF]` placeholders) are signed
+off as follows. The design rule they all serve: **every failure direction
+resolves to the tighter clamp.**
+
+| Constant | Value | Why this value |
+| --- | --- | --- |
+| `CTRL_VSUP_MAX_VCELL` | 4.0 V/cell | Worst-case fallback bus when no reading is trusted: comfortably above any legal charge target (§1 tops out at 3.65), so the fallback clamp `rotor_v / (4.0 × cells)` (≈18.8 % on 16S) is *tighter* than any real operating clamp — a fallback that can only under-drive the rotor. |
+| `CTRL_VSUP_MIN_VCELL` | 2.0 V/cell | Below this a live charging bus is physically implausible (a 2.0 V/cell LFP bank is destroyed-flat, and the alternator holds the bus up while charging), so the reading is treated as nonsense, not as a bus level — the worst-case fallback applies. |
+| `CTRL_VSUP_FLOOR_VCELL` | 3.2 V/cell | Hard floor under the *accepted* clamp voltage — `v_limp`'s §1 spec minimum, the lowest voltage any charging bus is allowed to sit at. Bounds ANY false-low, including the sub-step slow drift §8.4 found, to `rotor_v × V_true / (3.2 × cells)` ≈ 1.13× rated rotor volts (≈1.27× rated rotor watts) sustained worst case on this install — the accepted, WARN-telemetered residual. A *genuine* sub-floor bus is only ever clamped tighter by the floor (12 V / 51.2 V = 23.4 % where a true 48.0 V bus would allow 25 %) — the floor cannot loosen anything. |
+| `CTRL_VSUP_STEP_FRAC` | 4 % | Distrust threshold for a downward step. The largest plausible *honest* one-tick sag on this install is a heavy load step through pack + wiring resistance (~140 A × 12 mΩ ≈ 1.7 V ≈ 3 % at 54 V); anything deeper is treated as a sensor lie until proven. A false positive costs only availability (clamp holds tighter, WARN visible), never safety. |
+| `CTRL_VSUP_DISTRUST_MAX_MS` | 300 000 (5 min) | Re-anchor hold. A genuine bus re-level is re-trusted after 5 min of a stable lower reading — long enough that a transient lie cannot ride it, short enough that the clamp does not stay over-tight forever; WARN telemetered for the whole distrust interval. A lie that *survives* 5 min re-anchors, and the 3.2 V/cell floor row above then bounds the exposure. |
+
+Residual (also documented in `sim/README.md`, accepted): a consistent
+false-low present *from boot* on the single physical voltage source is
+undetectable in-core; its exposure is bounded by the floor row. Closing it
+fully needs a second, independent supply-sense channel ⟦future-hw⟧.
+
 ### 5.2 Engine-run detection & stationary-rotor budget
 
 A stationary rotor has no fan and no relative airflow — its safe continuous
@@ -689,6 +713,177 @@ therefore gated on a **RUN-DETECT state**:
   mode (and BULK/FLOAT exit to STANDBY via the ignition path as applicable).
 - The probe machinery is the same hardware path as §3.1's zero-field tach
   sampling — one mechanism, two consumers (RPM-while-resting, run-detect).
+
+**Detect-budget constants — signed off (2026-07-28, GH#34).** The "~5 %"
+placeholder above is now fixed (declared in `control/Inc/field.h`, asserted by
+the SIL `stalled_rotor` scenario):
+
+| Constant | Value | Why this value |
+| --- | --- | --- |
+| `CTRL_RUN_DETECT_EFFORT` | 0.05 (5 % of `duty_max`) | Effort maps to rotor current as `I_f = e × rotor_v / R_rotor` (§5.3), so the probe pulse drives ≈0.15 A into the 3 A-rated winding — excitation for the stator to answer, at ~0.25 % of rated rotor heating even if held continuously. Absolute duty ≈1.2 % on this install, inside §3.1's "~2 %". |
+| `CTRL_RUN_PROBE_PERIOD_MS` | 500 ms | Middle of the §3.1 probe cadence band (250–1000 ms): run-detection latency ≤ 1 s without meaningfully raising the average excitation. |
+| `CTRL_RUN_PROBE_ON_MS` | 50 ms | The §3.1 "≤50 ms" pulse bound; the 10 % on-ratio gives average `I_f` ≈ 15 mA (§3.1 requires < 0.1 A) and average rotor dissipation ≈ 9 mW — a stationary, fanless rotor stays at ambient indefinitely (SIL 2 h key-on-engine-off soak: `I_f` ≤ 0.25 A, ≤ 1 W, no temperature rise). |
+
+Failure-mode check behind the sign-off: if the pulse cycling ever wedged fully
+ON, continuous 5 % effort is 0.15 A ≈ 0.09 W into a 36 W-rated winding — the
+budget stays safe even when its own timer breaks. What SIL **cannot** prove:
+whether 0.15 A of excitation yields a readable stator waveform on the real
+machine — probe *detectability* is `bench-pending` (Stage-C dummy load first,
+then the installed alternator). If it falls short, raise the pulse amplitude
+(the thermal argument above holds far beyond 5 %), not the on-ratio.
+
+### 5.3 Inner field-loop numerics (v1 — specified 2026-07-28, GH#34)
+
+This section specifies the shipped inner loop (`control/Src/control.c`) and
+records the derivation the §8.1 SIL retune ("dt-scaled, KP −5×") was missing.
+Scope honesty up front: the plant-gain figures come from the SIL plant
+calibrated to **one** real operating point (the 2026-07-24 stock charge
+trace); the quantities that cannot be derived without the bench are listed at
+the end with the measurement that closes each. Changing any constant here is a
+field-path change and takes the safety-review gate.
+
+**Loop rate.** One control tick per main-loop period: **100 Hz (10 ms,
+`LOOP_PERIOD_MS`)**, catch-up scheduler, IWDG-budgeted (§7 R1). Gains are
+**dt-scaled (per-second)** — the SIL retune removed the original per-tick,
+tick-rate-dependent form — so behavior is invariant under scheduling jitter;
+the discrete-stability bound below holds to dt ≈ 20 ms (two missed ticks),
+beyond which the watchdog is already the governing mechanism. The 143.2 Hz PWM
+carrier (§0.6 V2) is asynchronous to the loop; the duty compare is rewritten
+once per tick.
+
+**Controller form.** Not a textbook PI: two parallel **integral-only
+(velocity-form)** channels sharing ONE integrator — the normalized effort `e`
+(§5.1):
+
+```
+e_v = e + KV · (V_cv − ~V_pack) · dt      (CV channel; damped ~V, τ = 1 s)
+e_p = e + KP · (P_cmd − P_batt) · dt      (power channel; raw measured W)
+e  ← clamp( min(e_v, e_p), 0, 1 )         (lower demand governs — §2.4 layer 2)
+
+KV = 2.0    effort / (pack-volt · s)
+KP = 1.0e-3 effort / (watt · s)
+```
+
+There is deliberately no proportional term: the battery's ohmic response makes
+voltage/power react within one tick of an effort change (the plant supplies
+the fast path), and every *protection* is outside this loop — the OV
+comparator runs on raw signals (§1.4) and the §5.1 clamp bounds the actuator
+no matter what the loop does. Loop stability is therefore a **quality**
+property here, not a safety property: the worst any loop misbehavior can
+command is `e = 1` ⇒ duty = `duty_max` ⇒ rated rotor current.
+
+**What effort means physically (the derivation cornerstone).** With the §5.1
+clamp unsaturated, `duty = e · rotor_v / V_bus`, so the averaged rotor current
+is
+
+```
+I_f = duty · V_bus / R_rotor = e · rotor_v / R_rotor = 3.0 A × e   (12 V / 4 Ω install)
+```
+
+— **effort is a normalized rotor-current command, invariant to bus voltage**:
+the same gains are correct at 48.0 V and at 57.6 V because the bus voltage
+cancels. This is the §5.1 ratiometric rule made concrete (`e = 1` ⇔ rated
+rotor current). On a 12 V system, where `duty_max` saturates at 1.0,
+`I_f = e · V_bus / R_rotor` — similar span, but note KV acts on *pack* volts,
+so a 12 V install sees ~¼ the CV-channel gain per V/cell of error (the plant's
+volts-per-effort scale partially compensates). Only the 16S install is
+v1-relevant; revisit before any other voltage class runs this code.
+
+**Plant gains (calibrated SIL plant, §8.1).** Linearizing `sim/plant.c`
+(anchored to the stock trace: `k_e` = 0.012713, saturation `tanh(I_f/3 A)`,
+`R_stator + R_int` = 52 mΩ, `R_int` = 12 mΩ, pulley 2.5) around conducting
+operating points:
+
+```
+dI_alt/de = (rotor_v/R_rotor) · k_e · rpm_alt · sech²(I_f/3 A)/3 / (R_s + R_int)
+          ≈ 205 A/e at idle (800 eng RPM) … ≈ 600–750 A/e at cruise (2330 eng RPM)
+dP/de     = V_bus · dI_alt/de ≈ 33–41 kW/e at cruise (worst case SIL exercises)
+dV/de     = R_int · dI_alt/de ≈ 7–9 V/e instantaneous, through pack IR
+```
+
+The gain scales roughly with alternator speed (until deeper flux saturation),
+so it keeps growing above cruise — see the margin caveat below.
+
+**Power channel — margin claimed.** Discrete loop `Δe/tick = KP·dt·(P_cmd −
+P_batt)`; per-tick loop gain `KP · dt · dP/de ≈ 0.33–0.41` at the calibrated
+cruise point ⇒ smooth first-order settling, closed-loop τ ≈ 25–30 ms; **margin
+≈ 2.4–3× to the alternation bound (per-tick gain 1) and ≈ 5–6× to divergence
+(gain 2)** at that point. Cross-check that this *explains* the SIL finding
+rather than re-tuning blind: the pre-fix gain (5e-3 /W/s ≡ 5e-5 /W/tick)
+evaluates to ≈1.7–2.1 per tick on the same plant — inside the
+alternation/limit-cycle band, exactly the chatter the SIL BMS-step scenario
+reproduced and the live unit showed. The −5× reduction moved the loop out of
+the oscillatory band for a derivable reason. **Caveat (stated, not hidden):**
+because gain grows with RPM, extrapolating the single-point-calibrated
+saturation model to an engine top end near 3800 RPM brings the per-tick gain
+back toward ~1 — transient chatter at top RPM cannot be excluded from the
+model alone. SIL's `rpm_transients` covers idle↔cruise; the high-RPM margin is
+bench item 2 below.
+
+**CV channel — margin claimed, and it is thin.** The CV channel integrates a
+1 s-damped voltage (§1.4), so the open loop is `KV·G_v / (s · (1 + s·1 s))`
+plus ~1.5 ticks of transport delay. At the highest-gain point SIL exercises
+(cruise, CV binding, `G_v` ≈ 7–9 V/e): `KV·G_v ≈ 14–18 rad/s` ⇒ crossover
+≈3.5–4 rad/s, **derived phase margin ≈ 13–15°** — well below the ≥45°
+engineering norm (gain margin is comfortable, ≥20 dB; the −180° point sits
+near 15 rad/s where the loop is small). Stated plainly rather than papered
+over:
+
+- **what this predicts:** under-damped, decaying ringing (~0.5–1 Hz) when the
+  CV clamp first binds at speed — not divergence; the raw-signal OV comparator
+  and the 0.01 V/cell clamp band sit outside it;
+- **what SIL shows:** convergent CV holds, no sustained limit cycle, no
+  overvoltage, across the §8.1 gauntlet including the 5 M-tick soak —
+  empirically consistent with stable-but-underdamped;
+- **why it ships anyway:** safety does not rest on this margin (see the
+  controller-form note); the exposure is a bounded voltage wobble inside the
+  clamp band;
+- **the honest disposition:** KV = 2.0 is *flagged as likely to need a bench
+  retune* — if CV-hold chatter exceeds ±0.005 V/cell sustained on the bench,
+  halve KV and/or shorten the CV τ toward 0.5 s. That retune is a field-path
+  change → safety gate.
+
+**Anti-windup (all shipped; SIL/§8.4-tested).** (1) One shared integrator +
+min-select: the channel not selected cannot wind up, because there is no
+second state. (2) Hard clamp `e ∈ [0, 1]` every tick — railing at 1.0 against
+the rotor clamp is bounded authority, not windup, and unwinds at gain-rate the
+tick the selected error reverses. (3) NaN guard: a non-finite candidate effort
+resets to 0 and never latches (the SIL-found shunt-dropout defect, fixed).
+(4) `cmd_power_w` resets to 0 in STANDBY and under the §5.2 run-detect gate,
+so every resume re-runs the `ramp_w_per_s` soft start.
+
+**Slew.** Ramp-up lives in the *power* domain: `ramp_w_per_s` (10–1000 W/s,
+default 100) bounds commanded-power rise; ceiling *decreases* apply
+immediately (§3.5 asymmetry — a dip must not be skated over). There is no
+separate effort-domain slew limiter in v1: per-tick effort motion is already
+bounded by gain × error × dt and the [0, 1] clamp. Stock's fixed ~2 %/s duty
+ramp is matched in spirit by configuring `ramp_w_per_s` low, not by an effort
+slew.
+
+**Cannot be derived without the bench** — each `bench-pending`, with the
+measurement that closes it:
+
+1. **Rotor electrical time constant `τ_r = L/R`.** L has never been measured;
+   a claw-pole field winding at 4 Ω plausibly lands anywhere in ~25–250 ms.
+   Two claims depend on it: the average-duty model behind the §5.1 clamp
+   (needs `τ_r` ≫ the 7 ms PWM period — almost certainly true, and the §0.5
+   freewheel path supports it) and the power-loop phase at its ≈33–41 rad/s
+   equivalent crossover, which SIL cannot check because its rotor is algebraic
+   (`i_f = duty·V/R`, no L). *Measurement:* duty-step the field into the §5
+   dummy load on the bench supply and scope the current rise (M2 test-fw,
+   inside its 20 % cap). *Rule:* if `τ_r` > 50 ms, derate KP ×2 before any
+   closed-loop bench CV work.
+2. **True alternator gain `dI/de` across the RPM range.** The tanh saturation
+   shape is calibrated to a single trace point; both margin caveats above
+   inherit that. *Measurement:* the M6 capability sweep (§3.4) at 2–3 held
+   RPMs, including near the top of the engine range.
+3. **CV-hold quality on hardware** — accepts or retunes KV per the thin-margin
+   disposition above. *Measurement:* M3 exit bench CV hold into a dummy load;
+   record ~V ripple and duty spectrum for ≥10 min.
+
+The margins claimed in this section are claims about the **calibrated SIL
+plant** and are exactly as good as that calibration — that is the deliberate,
+stated limit of their authority.
 
 ---
 
@@ -855,7 +1050,119 @@ firmware-design deliverable, not a user concern. ⟦future-hw: second CAN⟧
 Structured faults: code, severity (INFO/WARN/FAULT/CRITICAL), latching flag,
 first/last-seen, count, freeze-frame (V/A/W/RPM+state/temps/stage/binding
 ceiling). Surfaced via LED blink, app plain-language + remedy, N2K alerts, DM1.
-Logging per §6.4.
+Logging per §6.4. *(Of that list, v1 today implements: the code set below,
+live severity, the latching rule, the N2K alert path, the USB/CAN bitfield,
+and crash-record freeze-frames. Per-fault first/last-seen/count and non-crash
+freeze-frames are unimplemented — discrepancy D8 in §9.3.)*
+
+### 9.1 Fault-code enumeration (authoritative, wire-stable — GH#34, 2026-07-28)
+
+**The wire-visible fault code is `bit index + 1`** of the fault's
+`ctrl_fault_bits_t` bit (`control/Inc/control.h`). This is not a new scheme:
+it freezes what the firmware already transmits — `n2k_alert_from_telemetry()`
+has always put `bit + 1` on the bus as the N2K `alert_id`; the USB telemetry
+line, the proprietary fast-packet, and the §7 R2 crash record carry the raw
+u32 bitfield (bit = code − 1); the LED (§9.2) blinks the same code.
+
+**Stability contract: wire codes are stable forever.** New faults append at
+the next free bit (code 18 = bit 17, …). Codes are never reused, renumbered,
+or reordered by insertion; retiring a fault retires its code permanently.
+Code 0 = no fault. Renaming a fault's *text* is allowed (text is descriptive);
+renumbering is a protocol break and is forbidden.
+
+Severity and field disposition below are the **implemented** classification
+(`control/Src/faults.c` masks — fixed in firmware, not config, per §7). Where
+implementation disagrees with this spec's intent, the row is annotated and the
+discrepancy is listed in §9.3 instead of being silently harmonized.
+
+| Code | Bit | Name (`CTRL_FAULT_*`) | Severity | Field disposition | Latches | v1 detector | Wire text | Blink |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 0 | `OVERVOLTAGE` | CRITICAL | OPEN | until reset | raw pack V ≥ 3.70 V/cell (`control.c`) | Battery overvoltage - field opened | 1S |
+| 2 | 1 | `FIELD_SHORT` | CRITICAL | OPEN | until reset | none — reserved (no field-current sense on v1; D3) | Field driver short - field opened | 2S |
+| 3 | 2 | `FIELD_OPEN` | WARN | none | no | none — reserved (D3) | Field circuit open | 3S |
+| 4 | 3 | `FIELD_OVERCUR` | CRITICAL | OPEN | until reset | none — reserved (BKIN refuted §0.6 V1+V2; D3) | Field overcurrent - field opened | 4S |
+| 5 | 4 | `SELF_OVERTEMP` | WARN | none ⚠(D2, GH#39) | no | alt hot-spot ≥ 120 °C **or** driver NTC ≥ 120 °C (`control.c`; conflated — D2) | Regulator over temperature | 5S |
+| 6 | 5 | `OVERSPEED` | CRITICAL | OPEN | until reset | none — no overspeed threshold parameter exists (D3) | Alternator overspeed - field opened | 6S |
+| 7 | 6 | `SHUNT_OPEN` | INFO ⚠(D1) | none ⚠(D1) | no | none (D3) | Current shunt open circuit | 7S |
+| 8 | 7 | `SHUNT_REVERSED` | INFO ⚠(D1) | none ⚠(D1) | no | none (D3) | Current shunt reversed | 8S |
+| 9 | 8 | `BATT_DTDT` | CRITICAL | OPEN | until reset | none — no battery-temp source in v1 (GH#40; D3) | Battery heating too fast - charge aborted | 9S |
+| 10 | 9 | `BATT_LOWTEMP` | FAULT | BLOCK charge (auto-resume) | no | `control.c` ≤ 0 °C — unarmable in v1 (GH#40) | Battery too cold to charge | 1L |
+| 11 | 10 | `BATT_HIGHTEMP` | FAULT | BLOCK charge (auto-resume) | no | `control.c` ≥ 55 °C — unarmable in v1 (GH#40) | Battery too hot - charge aborted | 1L+1S |
+| 12 | 11 | `LOST_VBAT_SENSE` | FAULT | LIMP (auto-recover) | no | VBat reading NaN (`control.c`) | Lost battery voltage sense - limp home | 1L+2S |
+| 13 | 12 | `LOST_BMS` | FAULT | LIMP (auto-recover) | no | none in v1 — CAN-IN deferred (PROJECT_PLAN §1.1) | Lost BMS communication - limp home | 1L+3S |
+| 14 | 13 | `IMPLAUSIBLE_SHUNT` | FAULT | LIMP (auto-recover) | no | INA226 §7 R6 error budget spent (`main.c`); the §7 claimed-I-vs-static-V plausibility check itself is unimplemented (D3) | Implausible shunt reading - limp home | 1L+4S |
+| 15 | 14 | `THERMAL_DIVERGE` | WARN | none | no | none — §4.1 divergence check unimplemented (D3) | Thermal model divergence | 1L+5S |
+| 16 | 15 | `WATCHDOG` | CRITICAL | OPEN | until reset | ≥3 consecutive watchdog/fault boots (§7 R1, `main.c`) | Watchdog reset - field opened | 1L+6S |
+| 17 | 16 | `VSUP_IMPLAUSIBLE` | WARN | none (clamp already holds tight) | clears on re-trust | `ctrl_vsup_guard()` distrust active (§5.1.1) | Field supply reading distrusted | 1L+7S |
+
+Latching rule (implemented, `control.c`): **OPEN-class codes latch until MCU
+reset** (power cycle / watchdog reboot; a deliberate fault-clear command does
+not exist yet — when added it must be logged as a config-grade event). LIMP
+and BLOCK classes re-evaluate live and self-clear/resume on recovery (the SIL
+`temperature` and `sensor_faults` scenarios assert both directions). WARN
+classes are live. The §2.4 "alarm latched while stale" rule for BMS protection
+alarms is v2, arriving with CAN-IN.
+
+### 9.2 LED blink encoding (contract fixed now; encoder not yet built — D4)
+
+The status LED's *fault layer* blinks the single **highest-severity active
+code**, ties broken by lowest code — deterministically the same pick
+`n2k_alert_from_telemetry()` makes, so LED, MFD alert, and app always name the
+same fault. Pattern: `⌊code/10⌋` long flashes (600 ms) then `code mod 10`
+short flashes (200 ms), 300 ms between flashes, 2 s gap between repeats.
+Examples: code 5 = 5 short; code 10 = 1 long; code 13 = 1 long + 3 short. No
+active fault → the LED shows the state layer (charge-state indication, defined
+with the LED driver, not here). Blink patterns inherit §9.1's stability
+contract.
+
+### 9.3 Code↔spec reconciliation — every mismatch found (GH#34 pass, 2026-07-28)
+
+Found while producing §9.1; listed rather than papered over. None are fixed in
+this pass — D1 and D2 land on the fault ladder and take the safety-review
+gate.
+
+- **D1 — `SHUNT_OPEN` / `SHUNT_REVERSED` are classified as nothing.** They
+  appear in no `faults.h` mask, so `ctrl_fault_severity()` returns INFO and
+  the disposition is CONTINUE — but §7 lists shunt-open/reversed detection as
+  a *fault* ("claimed current with static VBat → fault, not runaway"). Intent:
+  FAULT + LIMP (a lying current source is the `IMPLAUSIBLE_SHUNT` class). Mask
+  change = fault-ladder change → safety gate.
+- **D2 — `SELF_OVERTEMP` conflates two sensors and under-acts.** One bit
+  covers both "alternator hot-spot ≥ 120 °C" and "driver-stage NTC ≥ 120 °C";
+  the wire text ("Regulator over temperature") is wrong for the alternator
+  case; and the classification is WARN/CONTINUE, so neither condition affects
+  the field by itself (the alternator is only saved by the thermal governor's
+  independent ceiling; the driver stage by nothing — the §5.1 [SPEC-GAP],
+  GH#39; stock faults it at 125 °C). Intended shape: separate bits
+  (append-only — the alternator condition takes a NEW code; `SELF_OVERTEMP`
+  keeps code 5 for the driver stage) plus a real driver derate. Thresholds are
+  GH#39's to settle, not this pass's.
+- **D3 — nine codes have no v1 detector** (2, 3, 4, 6, 7, 8, 9, 13, 15; and
+  code 14's in-core plausibility half is also missing). Their codes,
+  severities, and texts are fixed *now* so detectors can land later without
+  any wire change; §7's protection list stays aspirational for these until
+  then.
+- **D4 — LED blink codes are promised (§5 outputs table; USER_MANUAL §8) but
+  no blink encoder exists** — only the raw PA9/PB14 output drivers (`dio.c`).
+  §9.2 fixes the contract; the implementation is outstanding M3/M4 work.
+- **D5 — header-comment drift in `control.h`** (fixed in this pass, comments
+  only): `FIELD_OPEN` said "WARN/FAULT" where the mask says WARN;
+  `FIELD_OVERCUR` said "BKIN territory" — a hardware backstop §0.6 V1+V2
+  refuted.
+- **D6 — a battery-temp BLOCK is invisible in the state annotation.** While
+  blocked (codes 10/11) the engine sits in STANDBY with reason `off`, not a
+  dedicated reason — the fault bit is the only tell. Violates the "annotated
+  with a reason" intent (PROFILE_SPEC §2.1); wants a `blocked` standby reason.
+  Cosmetic, but this spec's visibility rule says no silent states.
+- **D7 — §4.2's "low-temp Li cutoff = hard fault" reads as latching; the
+  implementation (and the SIL `temperature` scenario) auto-resumes** when the
+  battery re-enters the window. The §9.1 table fixes auto-resume BLOCK as
+  authoritative: a charge *window* is a gate, not a latch — the hazard is
+  charging outside the window, which the gate prevents in both directions.
+- **D8 — per-fault bookkeeping unimplemented**: first/last-seen, count, and
+  non-crash freeze-frames exist nowhere yet; today's surfaces are the live u32
+  bitfield (USB JSON, proprietary fast-packet), the highest-severity N2K
+  alert, and §7 R2 crash records. M4 telemetry work.
 
 ---
 

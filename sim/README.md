@@ -138,6 +138,13 @@ implemented in the pure core and asserted by the scenarios above:
    out-of-band lows fall back to the worst case (highest plausible bus =
    tightest clamp). Asserted by `scn_lying_vbat`.
 
+The detect-budget and clamp-guard constants behind fixes 1 and 3 were
+`[SPEC-SIGNOFF]` placeholders in `control/Inc/field.h`; they are signed off as
+of 2026-07-28 (GH#34), derivations recorded in `docs/CONTROL_SPEC_NEXTGEN.md`
+§5.1.1 (guard) and §5.2 (detect budget). The inner-loop gains this harness
+retuned are now specified — with claimed margins and their stated limits — in
+CONTROL_SPEC §5.3.
+
 ## Remaining known limitations (documented, not asserted)
 
 - **A consistent false-low from boot is undetectable** with a single physical

@@ -14,7 +14,10 @@
  * to a small pulse-cycled excitation (doubles as the run-detect probe, §3.1).
  * Spec gives "~5 % of duty_max" as a placeholder; the pulse timing below is
  * aligned to the §3.1 probe cadence (≤50 ms pulses every 250–1000 ms).
- * [SPEC-SIGNOFF] all three values are conservative placeholders pending review. */
+ * Signed off 2026-07-28 (GH#34) — CONTROL_SPEC §5.2 detect-budget table: pulse
+ * I_f ≈ 0.15 A, average ≈ 15 mA / ≈9 mW rotor dissipation; safe even wedged
+ * fully ON (0.09 W vs the 36 W rating). Probe DETECTABILITY at 0.15 A is
+ * bench-pending (Stage-C dummy load, then the installed machine). */
 #define CTRL_RUN_DETECT_EFFORT     0.05f   /* ≤5 % of duty_max while not running */
 #define CTRL_RUN_PROBE_PERIOD_MS   500u    /* probe cycle */
 #define CTRL_RUN_PROBE_ON_MS       50u     /* bounded on-time (10 % ratio) */
@@ -25,7 +28,9 @@
  * uses: rises are followed instantly (tighter clamp), implausible drops keep
  * the last-trusted (tighter) level, and out-of-band lows fall back to the
  * WORST CASE (highest plausible bus ⇒ tightest clamp) — never the loosest.
- * [SPEC-SIGNOFF] band/step/re-anchor values are engineering choices, not spec'd. */
+ * Signed off 2026-07-28 (GH#34) — CONTROL_SPEC §5.1.1: every failure direction
+ * resolves to the TIGHTER clamp; residual exposure bounded by the 3.2 V/cell
+ * floor below. */
 #define CTRL_VSUP_MAX_VCELL        4.0f    /* highest plausible live bus (V/cell) */
 #define CTRL_VSUP_MIN_VCELL        2.0f    /* below this the reading is nonsense */
 #define CTRL_VSUP_FLOOR_VCELL      3.2f    /* clamp-voltage hard floor (V/cell).
@@ -37,7 +42,8 @@
                                             * false-low's rotor exposure to
                                             * rotor_v x V_true/(3.2 x cells) ≈ 1.13x
                                             * rated worst-case on this install.
-                                            * [SPEC-SIGNOFF] */
+                                            * Signed off 2026-07-28 (GH#34):
+                                            * CONTROL_SPEC §5.1.1. */
 #define CTRL_VSUP_STEP_FRAC        0.04f   /* reading > 4 % below track → distrust */
 #define CTRL_VSUP_DISTRUST_MAX_MS  300000u /* sustained low level re-anchors after 5 min
                                             * (WARN telemetered the whole time) */

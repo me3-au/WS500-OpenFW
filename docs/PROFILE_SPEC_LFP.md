@@ -126,6 +126,9 @@ oscillation impossible faster than `t_tail_hold_s + t_revert_hold_s`
 | `warmup_coolant_c` | °C | unset | 20–90 | CAN coolant gate, optional |
 | `soc_target_pct` | % | unset | 70–100 | §4.3; unset = disabled |
 | `topbalance_days` | days | 10 | 1–60, unset | With `soc_target_pct` set: every N days ignore the SOC exit (T2b) and charge to the tail exit (T2a) |
+| `cv_hold_exit_min` | min | 15 | 0 (off), 5–120 | T2 primary voltage+time exit (§2.2). Range added 2026-07-28 (GH#34): below 5 min surface voltage alone can fake "held at CV" on a partially charged bank; above 120 min it stops being an exit (T2c territory) |
+| `skip_bulk_vcell` | V/cell | unset (0 = off) | 3.25–3.45 | T1 skip-BULK resting-voltage trigger — set to the install's solar float (typ. 3.375–3.40). Below 3.25 a *resting* bank is meaningfully discharged and must never skip BULK; above 3.45 exceeds the §1 float span (GH#34) |
+| `skip_bulk_soc_pct` | % | unset (≤0 = off) | 50–100 | T1 skip-BULK trusted-SOC trigger (§4.3 trust rules); skipping BULK below half charge is never right (GH#34) |
 
 ### 3.2 Tail exit
 
@@ -155,11 +158,40 @@ trusted) carry the exit, with a one-time INFO telling the user why.
 | `exit_at_cv_entry` | bool | Solar Finish flag (T2d) |
 | `rest_mode` | `hold` / `zero` | |
 | `rest_voltage` | primitive ref | `hold` only |
-| `rest_power_cap_w` | W or %max | `hold` only; cap on REST output |
+| `rest_power_cap_w` | W (canonical — % entry is client-side, see the ranges note below) | `hold` only; cap on REST output |
 | `v_revert` | V/cell | T3 voltage revert threshold |
 | `t_revert_hold_s` | s | T3 qualifier |
 | `soc_revert_pct` | % | T3, trusted SOC only |
 | `ah_revert` | Ah | T3, tier 1–2 only; default 0.30 × C |
+
+**Ranges for the §3.3 parameters (added 2026-07-28, GH#34 — closes the
+PROJECT_PLAN §8.4 "7 params lack §3 ranges" gap).** The firmware validator
+(`control/Src/config_validate.c`) currently enforces sanity only and marks
+each of these `[SPEC-GAP]`; those markers retire when the ranges below land in
+the M4 validator work. Values outside a range are rejected with a named error,
+never repaired (§1 rule).
+
+| Parameter | Range | Reason |
+| --- | --- | --- |
+| `rest_power_cap_w` | 0 – `max_charge_power_w` W | Canonical unit is **Watts** (note below). 0 is legal: FLOAT held with zero delivery behaves like zero-rest with CV monitoring — harmless. Values above `max_charge_power_w` are unreachable in the arbitration min(), so they can only mislead |
+| `v_revert` | 3.10 – 3.33 V/cell; hold-rest profiles additionally require `v_revert ≤ rest_voltage − 0.02` | §4.1 defaults live at 3.22–3.28 (≈20–60 % resting SoC). Below 3.10 the bank is deep-discharged long before a revert fires; at/above the rest voltage the regulator would revert the instant a load sags the bus — the 0.02 V/cell gap is the same anti-flap step §1 uses between primitives |
+| `t_revert_hold_s` | 5 – 600 s | Same window shape as the §5 revert damping (τ 5–300 s): under 5 s defeats the §2.2 anti-flap guarantee; over 10 min delays needed re-charging for no protective benefit. Per-profile defaults 30–60 |
+| `soc_revert_pct` | −1 (off), else 10 – 95 % | ≥95 would flap against the charged exit; ≤10 means reverting only when nearly empty, which the voltage path forbids first. Trusted SOC only (§4.3) |
+| `ah_revert` | 0.05 C – 0.80 C equivalent, stored as materialized Ah | Default 0.30 C. Below 0.05 C the integrator's tier-accuracy noise floor can fire it spuriously; above 0.80 C the bank would be near-flat before reverting — the voltage path fires first. C-relative window over an explicit stored Ah, exactly the §3.2 `p_tail_w` pattern |
+
+*(The three global parameters `cv_hold_exit_min` / `skip_bulk_vcell` /
+`skip_bulk_soc_pct` — the remaining spec-gapped params — carry their ranges in
+the §3.1 table above.)*
+
+**`rest_power_cap_w` %-form — resolved (2026-07-28, GH#34).** The "W or %max"
+ambiguity is settled the same way §3.2 settled `p_tail_w`: the stored,
+validated, wire value is **materialized Watts**; a percent-of-max entry is a
+client-side convenience converted at config time (`control/Inc/config_doc.h`
+documents the schema deviation — `power_cap_pct` is accepted-and-ignored on
+the wire, `power_cap_w` is canonical). A runtime %-form would make the value
+depend on `max_charge_power_w` at both ends and quantise on every round trip.
+§4.1's percentage cells are therefore *defaults expressed as percentages*,
+materialized to Watts when a profile is instantiated.
 
 ---
 

@@ -77,13 +77,19 @@ typedef enum {
 /* ---- Fault model (CONTROL_SPEC §7, §9) ------------------------------------ */
 typedef enum { CTRL_SEV_INFO = 0, CTRL_SEV_WARN, CTRL_SEV_FAULT, CTRL_SEV_CRITICAL } ctrl_severity_t;
 
-/* Fault bitfield; which faults LIMP vs OPEN is fixed in firmware, not config (§7). */
+/* Fault bitfield; which faults LIMP vs OPEN is fixed in firmware, not config (§7).
+ * BIT POSITIONS ARE FROZEN: the externally-visible fault code is bit index + 1
+ * (CONTROL_SPEC §9.1 — it is the N2K alert_id, the LED blink code, and the
+ * crash-record/telemetry bitfield). Append new faults at the next free bit;
+ * never renumber, reuse, or reorder. */
 typedef enum {
     CTRL_FAULT_NONE            = 0,
     CTRL_FAULT_OVERVOLTAGE     = 1u << 0,   /* CRITICAL: fast field kill */
     CTRL_FAULT_FIELD_SHORT     = 1u << 1,   /* CRITICAL */
-    CTRL_FAULT_FIELD_OPEN      = 1u << 2,   /* WARN/FAULT */
-    CTRL_FAULT_FIELD_OVERCUR   = 1u << 3,   /* CRITICAL: BKIN territory */
+    CTRL_FAULT_FIELD_OPEN      = 1u << 2,   /* WARN (no v1 detector — §9.1 D3) */
+    CTRL_FAULT_FIELD_OVERCUR   = 1u << 3,   /* CRITICAL (reserved, no v1 detector;
+                                             * BKIN refuted §0.6 V1+V2 — cutoff is
+                                             * the software §7 R0 funnel) */
     CTRL_FAULT_SELF_OVERTEMP   = 1u << 4,   /* driver-stage NTC (§5.1) */
     CTRL_FAULT_OVERSPEED       = 1u << 5,   /* CRITICAL, RPM present */
     CTRL_FAULT_SHUNT_OPEN      = 1u << 6,   /* claimed I with static VBat (§7) */
