@@ -36,6 +36,15 @@ Current state, honestly:
   GitHub Actions running the native control-test job, the new SIL gauntlet job, and the
   firmware build.
 
+### Changed
+- **V1/V2 scope re-alignment (owner decision 2026-07-28)** — **All CAN Rx for control
+  (BMS/DVCC ceilings, multi-unit sync, engine RPM, pre-disconnect, battery-temp sourcing)
+  deferred to V2.** V1 scope now: CAN Tx telemetry only (read-only broadcast; cannot
+  affect the loop). A committed first slice (CAN Rx with BMS ceilings) was reverted
+  (commit b2da41a). Work is parked on branch `wip/can-in-v2-cvl-predisconnect`. See
+  PROJECT_PLAN §1.1 for V2 entry criteria (DVCC design pass, CVL consumer, pre-disconnect,
+  `bms_required` flag, field-path safety gate).
+
 ### Fixed
 - **Four control-core defects caught by the SIL gauntlet** — NaN field duty on lost VBat
   sense; permanent effort-integrator latch on a NaN shunt reading; tick-rate-dependent,

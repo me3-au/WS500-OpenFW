@@ -43,13 +43,32 @@ mirror or conflict with (`CP_Index`/`BC_Index` and their override fields are gon
 ### 0.1 Target hardware — v1 is the WS500 platform
 
 v1 runs on the existing WS500 board. Recovered inventory (see
-[WS500_HARDWARE_SPEC.md](WS500_HARDWARE_SPEC.md)): STM32F072; field PWM on TIM1 with
-BKIN hardware fault trip; stator capture on TIM2; **one** CAN bus (bxCAN); USB
-CDC config port (ST system DFU bootloader in ROM); current + local bus voltage
-via a TI INA226/228/238 on I²C at the **single** external shunt (battery- or
-alternator-side per config); ADC: one external alternator NTC, one
-regulator-internal **driver-stage NTC**, one battery NTC, VBat Kelvin-sense
-divider; digital: 1× Ignition, 1× Feature-In, 1× Lamp/Feature-Out; status LED.
+[WS500_HARDWARE_SPEC.md](WS500_HARDWARE_SPEC.md)): STM32F072RB (LQFP64,
+PROJECT_PLAN §0.6 V1); field PWM on TIM1 CH1 at **143.2 Hz / 10-bit**
+(V2) — **no BKIN hardware trip: the break input is unrouted and the stock
+`BDTR.BKE = 0`, so field cutoff is a software path** (V1+V2, see the
+callout below); stator on **PA10 EXTI rising edge with TIM2 as a
+free-running timebase** — not a TIM2 capture channel (V1+V2); **one** CAN bus
+(bxCAN); USB CDC config port (ST system DFU bootloader in ROM); current +
+local bus voltage via a **TI INA226** (single part, no variant auto-detect —
+V3) on I²C at the **single** external shunt (battery- or alternator-side per
+config); ADC: **two β3950 external NTC channels (PA1/PA2)** and one
+regulator-internal **driver-stage NTC (PA3, β3380)** — **there is no battery
+NTC** (V8); VBat Kelvin-sense divider; digital: 1× Ignition, 1× Feature-In,
+1× Lamp/Feature-Out; status LED.
+
+> **⚠ There is no hardware field-cutoff backstop on this board.** Earlier
+> drafts of this spec listed a TIM1 BKIN comparator trip as the last-resort
+> field cutoff. PROJECT_PLAN §0.6 V1 and V2 refuted it from the stock binary:
+> no break alternate-function pin is configured on any port, and `BDTR.BKE = 0`
+> in the stock `MX_TIM1_Init`. The stock product cuts the field in **software**
+> by clearing `BDTR.MOE`. Our firmware does the same, through the single §7 R0
+> `enter_safe_state()` funnel (`Core/Src/safe_state.c`). **Nothing in this spec
+> may be relaxed on the assumption that hardware will catch it** — the software
+> funnel is the whole protection, which is exactly why §7 R0 requires it to be
+> callable from a fault handler with a corrupt stack. A real BKIN trip stays
+> available only as a ⟦future-hw⟧ improvement, and only if a fault comparator
+> is ever wired to a break-capable pin.
 
 Everything in this spec is written to run on that inventory. Features needing
 hardware the platform lacks are **excluded from v1** and marked ⟦future-hw⟧
@@ -58,9 +77,11 @@ where they appear:
 | Excluded (no hardware) | v1 consequence |
 | --- | --- |
 | Rotor/field current metering | §5.1 runs in duty-clamp + driver-temp mode; no rotor R learning / temp observer |
+| Hardware field-cutoff (TIM1 BKIN) | Refuted by §0.6 V1+V2 — cutoff is the software §7 R0 funnel; see the callout above |
+| Local battery-temperature sensor | The third NTC channel is the **driver-stage** sensor (§0.6 V8), not a BTS. Battery temp is a **v2** CAN/BMS input (PROJECT_PLAN §1.1), so the §4.2 charge-window gate has no v1 source — see §4.2 |
 | Second local shunt channel | Single-shunt placement rules (§6.2) |
-| Dedicated crank-pulse RPM input | RPM sources = CAN + stator only (§3.1) |
-| EGT input | EGT ceiling only if EGT arrives on CAN |
+| Dedicated crank-pulse RPM input | RPM sources = CAN + stator only (§3.1); with CAN-IN deferred to v2, **stator is the sole v1 source** |
+| EGT input | EGT ceiling only if EGT arrives on CAN (⇒ v2) |
 | Second CAN bus | All dialects + regulator sync share the one bus (§8) |
 | BLE / Wi-Fi | Config, logs, firmware over USB CDC/DFU and CAN (§6.7) |
 | Dedicated tach output pin | Synthesized tach is a Feature-Out **function** — competes with lamp/fan for the single output (§3.2) |
@@ -308,8 +329,11 @@ hold it back"). **Until it is closed, do not describe this regulator as DVCC-com
 
 ### 3.1 Sources, fused, priority-ordered
 
-1. CAN engine RPM (N2K 127488 / J1939 EEC1) — field-independent
-2. Stator zero-crossing (TIM2 capture), with **probe sampling** at zero field:
+1. CAN engine RPM (N2K 127488 / J1939 EEC1) — field-independent. **v2 only**:
+   all CAN control-in is deferred (PROJECT_PLAN §1.1), so in v1 this source is
+   never present and the fusion below degenerates to a single source
+2. Stator zero-crossing (**PA10 EXTI edge + TIM2 timebase**, §0.1 — not a TIM2
+   capture channel), with **probe sampling** at zero field:
    sub-charging pulses (~2 % duty, ≤50 ms, every 250–1000 ms, <0.1 A avg) keep
    the stator readable while contributing no meaningful charge
 
@@ -329,6 +353,16 @@ Validity state machine VALID / STALE / LOST. On LOST, RPM-derived ceilings (§2
 items 4–5) simply drop out of the min() in favor of the flat caps — signal loss
 degrades gracefully instead of triggering rule chaos. "RPM = 0" is never inferred
 from silence.
+
+**v1 has no second source to fall back to.** With CAN engine RPM deferred to v2,
+a stator that fails its quality gates puts the fused value straight to LOST
+rather than to a lower-priority source. That is safe by construction — LOST
+drops the RPM ceilings out of the min() and the §5.2 run-detect gate
+independently holds the field to the stationary-rotor budget until rotation is
+confirmed — but it means the belt/engine-load ceilings (§2.2, §3.5) are
+**inactive whenever the stator is unreadable in v1**, and the flat caps are
+carrying the whole load. Do not spec any protection that depends on RPM being
+available.
 
 ### 3.2 Synthesized tach output
 
@@ -499,12 +533,28 @@ before any limit is hit.
 - Fan call on Feature-Out (when assigned) engages when `T_projected`
   approaches target — cooling is spent *before* output is (§4.1 makes this
   predictive, not reactive).
-- One external alternator sensor on v1; the internal driver-stage NTC guards
-  the regulator/field switch as a separate comparator (it is not part of the
-  alternator hot-spot model). ⟦future-hw: second alt sensor, controller on
-  max() of estimates, divergence plausibility warning⟧
+- One external alternator sensor on v1; the internal driver-stage NTC
+  (PA3, β3380 — confirmed as the FET/driver over-temp channel by §0.6 V8, which
+  also shows the stock firmware faulting it at 125 °C) guards the
+  regulator/field switch as a separate guard path. It is **not** part of the
+  alternator hot-spot model, and — since BKIN is unrouted (§0.1) — it is a
+  *software* guard, not a comparator. ⟦future-hw: second alt sensor, controller
+  on max() of estimates, divergence plausibility warning⟧
 - Battery temp is only a charge-window gate (low-temp Li cutoff = hard fault,
   high-temp = charge abort). No comp curves.
+  - **v1 has no battery-temperature source at all.** §0.6 V8 established that
+    the third NTC channel is the driver-stage sensor, not a battery sensor, and
+    PROJECT_PLAN §1.1 defers all CAN/BMS input to v2 — so the only two paths to
+    a battery temperature are both absent in v1. Consequences, which the
+    firmware must make **visible rather than silent**: the low/high-temp
+    charge-window gate cannot arm, and battery-temperature compensation is a
+    **v2 feature** (it was never in this Li-first model anyway — §0 and
+    Appendix A delete comp curves outright). A v1 build reports the battery-temp
+    input as *unavailable*; it must never report a window as *satisfied*.
+    Alternator and driver-stage thermal protection are unaffected — those run
+    on local sensors and are fully live in v1. `bench-pending`: if a harness
+    battery-temp input is ever positively identified (§0.6 lists no candidate),
+    this reverts to a v1 feature.
 
 ---
 
@@ -516,10 +566,11 @@ before any limit is hit.
 | --- | --- |
 | B+ / field supply (12/24/48 V systems) | Single platform across system voltages |
 | VBat Kelvin sense pair | PC5 divider; mandatory-grade accuracy for Li CV |
-| Shunt ±50 mV (one, battery- **or** alternator-side) | Digitized by the I²C INA22x/238 → V, A, **W** on-device. Placement declared in config (§6.2) |
-| Alt temp ×1 (external NTC), battery temp ×1 | Open/short detect; REQUIRED/OPTIONAL/IGNORE policy with declared fallback; mount location (`laminations` / `case_front` / `case_rear`, §4) |
-| Driver-stage temp (internal NTC) | Regulator/field-switch guard; rotor proxy on v1 (§5.1) |
-| Stator/W input | RPM source 2 (TIM2 capture) |
+| Shunt ±50 mV (one, battery- **or** alternator-side) | Digitized by the I²C **INA226** (§0.6 V3 — one part, no auto-detect) → V, A; **W computed in software** (CALIBRATION left at POR, on-chip CURRENT/POWER unused). Placement declared in config (§6.2) |
+| Alt temp ×2 max (external β3950 NTC, PA1/PA2) | Open/short detect; REQUIRED/OPTIONAL/IGNORE policy with declared fallback; mount location (`laminations` / `case_front` / `case_rear`, §4). Which channel is the alternator probe vs. a second external probe is `bench-pending` (identical β in firmware — §0.6) |
+| ~~Battery temp~~ | **Not an input on this board** — §0.6 V8 reassigned the third NTC to the driver stage. v2 CAN/BMS only (§4.2) |
+| Driver-stage temp (internal NTC, PA3 β3380) | Regulator/field-switch guard; rotor proxy on v1 (§5.1) |
+| Stator/W input | RPM source 2 — **PA10 EXTI edge + TIM2 timebase** (§0.1); sole v1 RPM source |
 | Ignition/enable | Wake |
 | Feature-In ×1 | **One** assignable function: force-rest, quiet-mode cap, profile toggle, or `curve_feature` select. No repurposing logic |
 | CAN ×1 (all dialects, §8), USB CDC | ⟦future-hw: second CAN, BLE/Wi-Fi, crank input, EGT input⟧ |
@@ -528,7 +579,7 @@ before any limit is hit.
 
 | Output | Notes |
 | --- | --- |
-| Field drive | TIM1 PWM + BKIN hardware fault trip; P/N-type per board topology; slew-limited soft ramp (belt + BMS-coordinated shutdown). Rotor clamp + ratiometric control — §5.1 |
+| Field drive | TIM1 CH1 PWM @143.2 Hz, 10-bit (§0.1); cutoff is **software** (`BDTR.MOE` clear via the §7 R0 funnel) — **no BKIN**; P/N-type per board topology; slew-limited soft ramp (belt shutdown; BMS-coordinated shutdown is v2). Rotor clamp + ratiometric control — §5.1 |
 | Lamp/Feature-Out ×1 | **One** assignable function: lamp, synthesized tach (§3.2), fan call, alarm, charge-active |
 | Status LED | State + blink-coded faults |
 
@@ -536,10 +587,11 @@ before any limit is hit.
 
 Most 48 V alternators carry a **12 V rotor**. The physical limit is **rotor
 current** — I²R heating — not voltage; duty percentages are a proxy two steps
-removed. The WS500 platform has **no field-current metering** (ADC scan fully
-accounted for; field protection is the TIM1 BKIN comparator trip), so v1 runs
-the best proxy the hardware allows, and the current-first design is recorded
-as the ⟦future-hw⟧ upgrade path.
+removed. The WS500 platform has **no field-current metering** (the 7-channel ADC
+scan is fully accounted for — §0.6 V4) **and no hardware field-cutoff** (BKIN
+unrouted, `BDTR.BKE = 0` — §0.6 V1+V2). So v1 runs the best proxy the hardware
+allows *and* carries the entire protection in software; the current-first design
+is recorded as the ⟦future-hw⟧ upgrade path.
 
 **v1 baseline — dynamic duty clamp + driver-temp guard:**
 
@@ -549,13 +601,32 @@ as the ⟦future-hw⟧ upgrade path.
   the charge-voltage rise; the dynamic clamp cannot. `rotor_rated_v` defaults
   to **12 V whenever the system is 48 V**; confirmed at commissioning like
   `cells_series`.
-- **Driver-stage NTC as proxy guard.** The internal driver-temp sensor (the
-  "rotor drive temp sense") heats with field current and with cooling
-  failures — a usable *alarm and derate trigger* for the switch stage, though
-  not a rotor model. Sustained driver over-temp pulls field effort down and
-  raises WARN.
-- **BKIN hardware trip** remains the last-resort field cutoff (comparator,
-  <µs, independent of firmware).
+- **Driver-stage NTC as proxy guard.** The internal driver-temp sensor (PA3,
+  β3380 — §0.6 V8 confirms this is the FET/driver channel and that stock faults
+  it at 125 °C) heats with field current and with cooling failures — a usable
+  *alarm and derate trigger* for the switch stage, though not a rotor model.
+  Sustained driver over-temp pulls field effort down and raises WARN.
+  **[SPEC-GAP] The derate half of that sentence is NOT IMPLEMENTED** (safety
+  review, 2026-07-28): `control.c` raises `CTRL_FAULT_SELF_OVERTEMP` at 120 °C,
+  but that bit lives in `CTRL_FAULT_WARN_MASK` — disposition CONTINUE — and no
+  arbitration ceiling consumes `driver_temp_c` (the thermal governor derates on
+  the *alternator* probe only). So today a cooking field switch sets a bit and
+  the field keeps driving at full commanded duty. That is **weaker than stock**,
+  which faults at 125 °C, and it matters far more now that BKIN is refuted: with
+  no hardware trip and no rotor current sense, this NTC is the only guard the
+  switch stage has. Must be closed before any sustained-load bench run — see the
+  tracking issue. This
+  closes the "§5.1 rests on an *inferred* internal-NTC channel" open item that
+  PROJECT_PLAN §0.6 recorded against this section: the channel is confirmed,
+  and it is the driver stage, not the battery.
+- **Last-resort field cutoff is software** — the §7 R0 `enter_safe_state()`
+  funnel clears `BDTR.MOE`, zeroes the duty and drives the pin low. There is no
+  comparator beneath it (§0.1). Two design obligations follow, and neither is
+  optional on this board: the funnel must be reachable from every failure path
+  including a fault handler on a corrupt stack, and the clamp above it must be
+  correct-by-construction rather than backstopped — which is why §8.1/§8.4 of
+  PROJECT_PLAN verify the clamp exhaustively in SIL and property tests instead
+  of trusting a trip that does not exist.
 - The active mode is telemetered — v1 installs *see* "rotor model:
   unavailable (no current sense)". Silent degradation is the enemy.
 

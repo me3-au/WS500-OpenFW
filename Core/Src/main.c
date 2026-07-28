@@ -64,9 +64,40 @@ static uint32_t app_ext_faults(void)
      * spec'd LIMP path instead of merely seeing a missing signal. */
     if (errb_faulted(ERRB_INA226)) f |= CTRL_FAULT_IMPLAUSIBLE_SHUNT;
 
-    /* §7 R6: a CAN link that keeps going bus-off means BMS/DVCC ceilings stop
-     * arriving — the engine's LOST_BMS disposition (LIMP) is the right one. */
-    if (errb_faulted(ERRB_CAN)) f |= CTRL_FAULT_LOST_BMS;
+    /* ERRB_CAN deliberately maps to NO control fault in V1 — and this is a
+     * deliberate REMOVAL, so the reasoning has to survive here.
+     *
+     * It used to raise CTRL_FAULT_LOST_BMS, which is correct arithmetic when CAN
+     * carries BMS/DVCC ceilings: lose the link, lose the ceilings, take the
+     * spec'd LIMP path. But PROJECT_PLAN §1.1 moved ALL CAN control-in to V2, and
+     * the b2da41a revert removed the decoder, so in V1 this bus is telemetry-OUT
+     * only: can_drain_rx() feeds nothing but address-claim and RV-C RBM election,
+     * and main() passes bms_ccl_w = CTRL_CEILING_INACTIVE unconditionally below.
+     * There is no ceiling to lose. Keeping the mapping would drop a healthy
+     * regulator into LIMP because a Cerbo was switched off or a terminator fell
+     * out — degrading a live 48 V charging system for the loss of an input this
+     * build never consumed. The engine must not be told it lost something it was
+     * never given.
+     *
+     * The failure is still REPORTED, not swallowed: errb_fault_mask() and the
+     * can_boff/can_txdrop counters ride the 1 Hz telemetry line (#20), which is
+     * what §7 R6 actually requires of an error budget — visibility, not an
+     * automatic charging penalty.
+     *
+     * V2 RE-ENTRY CRITERION: restoring CAN-IN restores this line. It belongs in
+     * the same change that first lets a decoded ceiling reach arbitration —
+     * never later, or V2 ships a regulator that trusts a stale BMS ceiling from
+     * a bus that stopped talking.
+     *
+     * Restoring it is NECESSARY BUT NOT SUFFICIENT, and this is the part that is
+     * easy to miss: ERRB_CAN only ever fires on bus-off, so it catches a broken
+     * *bus*, not a silent *BMS*. A BMS that is powered down or wedged while a
+     * Cerbo keeps the bus healthy produces no bus-off, no ERRB_CAN, and no
+     * LOST_BMS — and the last decoded ceiling would be held forever. V2 must
+     * therefore ALSO give the decoded ceiling its own per-message freshness
+     * timeout, which is the real staleness defence; this line is only the
+     * link-layer half of it. Pairs with the `bms_required` flag in the §1.1
+     * V2 entry criteria. See PROJECT_PLAN §1.1 consequence 3 (fault ladder). */
 
     /* ERRB_EEPROM deliberately maps to NO control fault: the config it holds is
      * already resident in RAM, so a dead config store cannot make charging

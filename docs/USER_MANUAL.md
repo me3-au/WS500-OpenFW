@@ -42,6 +42,10 @@ This single mechanism replaces every legacy "mode" — there's nothing hidden to
 If your output is 1800 W and the display says *Thermal*, the alternator is as hot as
 you've allowed and everything else has more room.
 
+*In **v1**, the active limits are: profile power, thermal, battery C-rate, wiring,
+alternator, belt (if RPM is available from the stator), and your cap. **BMS limit is
+v2 only** (via CAN). Engine budget becomes active when RPM is available.*
+
 ## 2. Voltages are per-cell
 
 Every voltage is set in **volts per cell (V/cell)**; the pack value is `V/cell ×
@@ -97,8 +101,9 @@ behavior. Switching profiles never adds states.
   gets a safe *sprint* of extra power (thermal mass), tapering as it heats.
 - **Hardware limit set** (commissioned once): **battery C-rate**, **wiring ampacity**,
   **alternator rating** — native units, converted to Watts at the present voltage.
-- **BMS ceiling:** a battery's charge-current/voltage limit (DVCC / CAN BMS) is just
-  another input to the min() — see `CAN_INTEGRATION.md`.
+- **BMS ceiling** *(v2):* a battery's charge-current/voltage limit (DVCC / CAN BMS) is just
+  another input to the min() — see `CAN_INTEGRATION.md`. *This is available in v2; v1 runs
+  on your commissioned limits only.*
 - **Engine budget & belt** *(needs an RPM source):* a Watts-vs-RPM curve keeps engine
   load and belt torque in bounds; near-zero at idle, rising with speed.
 
@@ -155,22 +160,27 @@ logged, plain-language override.
 ## 7. RPM & tach (optional)
 
 RPM is **never required**. With no RPM source the regulator runs a flat power cap +
-the thermal loop. When RPM *is* available (CAN engine data or the stator signal), it
-unlocks the engine/belt curves, a real-RPM **synthesized tach output**, and overspeed
-protection. Calibration is one learned constant — no pole counts or pulley ratios to
-type.
+the thermal loop. When RPM *is* available, it unlocks the engine/belt curves, a real-RPM
+**synthesized tach output**, and overspeed protection. Calibration is one learned
+constant — no pole counts or pulley ratios to type.
+
+**In v1**, the sole RPM source is the **stator signal** — the regulator measures alternator
+frequency and converts it to engine RPM. *CAN engine RPM* (from a compatible engine computer
+or gateway) is available in **v2**.
 
 ## 8. Faults & Limp Home
 
 Faults carry a **severity** (INFO / WARN / FAULT / CRITICAL) and a **disposition**:
 
 - **CRITICAL → field open:** overvoltage, field short/over-current, overspeed,
-  watchdog, battery thermal runaway. Charging stops immediately (hardware cutoff).
-- **Recoverable → Limp Home:** lost voltage sense, lost BMS comms, implausible shunt.
+  watchdog, battery thermal runaway. Charging stops immediately — the field is cut at
+  the timer's output-enable, ahead of the control loop, so it happens even if the
+  regulation logic itself is what went wrong.
+- **Recoverable → Limp Home:** lost voltage sense, implausible shunt (and **lost BMS comms** in v2).
   Rather than quitting, the regulator drops to **FLOAT at the Limp voltage** with a
   reduced power cap — safe, minimal-stress, still useful.
 - **Charge-window blocks:** battery too cold/hot → charging pauses until it's back in
-  range.
+  range. *(v1 has no battery-temperature input; see §9 for what's available.)*
 
 The **status LED** blink-codes the active fault; the app shows plain-language text and
 a remedy. Nothing degrades silently — the active mode is always on the display.
@@ -180,9 +190,11 @@ a remedy. Nothing degrades silently — the active mode is always on the display
 - **Battery voltage** — Kelvin sense pair (mandatory-grade for Li CV).
 - **Current + local bus voltage** — one INA-class shunt monitor, battery- or
   alternator-side (you declare which).
-- **Alternator temperature** (external NTC), **battery temperature** (NTC, charge-window
-  gate only — no comp curves), **driver-stage temperature** (internal, rotor backstop).
-- **Stator** frequency for RPM (optional).
+- **Alternator temperature** (external NTC probe) and **driver-stage temperature** (internal,
+  rotor backstop). *(In v1, these two local sensors protect the alternator and regulator;
+  battery temperature for charge-window gating is a **v2** feature via CAN/BMS.)*
+- **Stator** frequency for RPM (optional; in v1, the stator signal is the sole engine-RPM
+  source).
 
 ## 10. What "resistance & OCV learning" buys you (v1, where sensors allow)
 

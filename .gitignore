@@ -17,3 +17,15 @@
 /Middlewares/
 # Wakespeed vendor manuals — reference only, do NOT redistribute (copyright)
 /docs/*.pdf
+
+# Bench captures from the live unit — THIS REPO IS PUBLIC.
+# A `$RAS:` dump includes the regulator's configured password in plain text on the
+# NPC; line unless it was set hidden (leading '.') — see docs/STAGE_A_RUNSHEET.md
+# Procedure 1. Raw serial logs, CAN traces and scope exports may also carry
+# install-identifying detail. Keep them local; commit only redacted, decoded
+# fixtures, and only deliberately (`git add -f`).
+*.log
+/captures/
+/bench/
+*_capture.csv
+*_trace.csv

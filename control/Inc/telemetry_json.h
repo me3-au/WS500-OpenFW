@@ -24,7 +24,8 @@
  *          "crashes":N,"crash_kind":N,"crash_pc":U,
  *          "crc":"ok|mismatch|unpatched|unavail",
  *          "stack_used":U,"stack_free":U,
- *          "errb":U,"errb_reinit":[U*3],"safe":U}}
+ *          "errb":U,"errb_reinit":[U*3],"safe":U,
+ *          "can_boff":U,"can_txdrop":U}}
  *
  * N = small integer, U = unsigned 32-bit decimal, F = float (non-finite → null,
  * the same "unset travels as null" rule the config wire uses, config_json.h).
@@ -48,6 +49,11 @@
  *   errb         latched err-budget fault mask, bit order TELEM_ERRB_* (§7 R6)
  *   errb_reinit  per-domain reinit counters, same order
  *   safe         safe_state_entry_count() (§7 R0)
+ *   can_boff     can_n2k_bus_off_count() — bxCAN bus-off events since boot
+ *                (§7 R6, GH#10 residue: distinct from the ERRB_CAN budget bit
+ *                above, which is the LATCHED fault; this is the raw event tally)
+ *   can_txdrop   can_n2k_tx_dropped_count() — frames dropped because the
+ *                software Tx ring was full (§7 R6)
  */
 #ifndef WS500_TELEMETRY_JSON_H
 #define WS500_TELEMETRY_JSON_H
@@ -98,6 +104,8 @@ typedef struct {
     uint32_t errb_fault_mask;                  /* TELEM_ERRB_* bits */
     uint32_t errb_reinits[TELEM_ERRB_COUNT];
     uint32_t safe_state_entries;
+    uint32_t can_bus_off_count;                /* can_n2k_bus_off_count() */
+    uint32_t can_tx_dropped_count;             /* can_n2k_tx_dropped_count() */
 } telem_diag_t;
 
 /*

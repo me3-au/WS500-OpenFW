@@ -44,8 +44,14 @@ The STM32 bootloader is in ROM and unbrickable.
 2. Confirm **system voltage auto-detect** (12/24/48 V) and one-time confirm the
    **cell count**.
 3. Set **bank capacity (Ah)** and **max charge power (W)** — the two required numbers.
-4. Declare the **shunt location** (battery-side recommended; alternator-side disables
-   tail-current exit — the tool tells you).
+4. Declare the **shunt location**. This is an install-time choice and affects charging
+   behavior:
+   - **Battery-side shunt (recommended in v1):** the regulator reads the battery's current
+     directly. Charge exits when battery current falls below the tail-current threshold
+     (faster, needs no external monitor).
+   - **Alternator-side shunt:** the regulator reads the alternator current. Tail-current
+     exit is disabled in v1 (it requires an external battery-side monitor to confirm
+     charging is actually done — a v2 feature). Charge exits by time/voltage only.
 
 ## 3. Pick a profile
 

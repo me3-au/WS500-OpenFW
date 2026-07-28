@@ -17,6 +17,7 @@
 #include "integrity.h"
 #include "err_budget.h"
 #include "safe_state.h"
+#include "can_n2k.h"
 #include "stm32f0xx_hal.h"   /* HAL_GetTick */
 #include <string.h>
 
@@ -88,6 +89,11 @@ static void telem_emit(void)
 
     /* §7 R0. */
     d.safe_state_entries = safe_state_entry_count();
+
+    /* §7 R6 residue (GH#10): raw CAN error counters, distinct from the
+     * latched ERRB_CAN budget bit above — see can_n2k.h. */
+    d.can_bus_off_count    = can_n2k_bus_off_count();
+    d.can_tx_dropped_count = can_n2k_tx_dropped_count();
 
     char chunk[128];   /* same streaming-chunk shape as the config replies */
     (void)telem_json_line(chunk, (int)sizeof chunk, telem_sink, NULL,

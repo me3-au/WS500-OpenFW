@@ -79,6 +79,8 @@ static telem_diag_t sample_diag(void)
     d.errb_reinits[TELEM_ERRB_INA226] = 1;
     d.errb_reinits[TELEM_ERRB_CAN]    = 2;
     d.safe_state_entries = 1;
+    d.can_bus_off_count    = 5;
+    d.can_tx_dropped_count = 4000000000u;   /* > LONG_MAX: forces w_u32 */
     return d;
 }
 
@@ -138,6 +140,8 @@ void test_telemetry_json(void)
     CHECK(has("\"errb\":4"));
     CHECK(has("\"errb_reinit\":[1,0,2]"));
     CHECK(has("\"safe\":1"));
+    CHECK(has("\"can_boff\":5"));
+    CHECK(has("\"can_txdrop\":4000000000"));  /* u32 above LONG_MAX */
 
     /* All four CRC verdict strings, and nothing outside the closed set. */
     {

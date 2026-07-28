@@ -100,10 +100,12 @@ uint32_t can_n2k_bus_off_count(void);
  * at all because nothing is acknowledging), not bus errors. A steadily
  * climbing value means the Tx cadence is over-subscribed for the link.
  *
- * TODO(GH#10): surface this and can_n2k_bus_off_count() in the telemetry line
- * with the CAN half of deliverable #20 — §7 R6 wants every error counter
- * visible. The errb budget (ERRB_CAN) already reaches telemetry; these two
- * raw counters do not yet.
+ * This and can_n2k_bus_off_count() are published on the USB telemetry line
+ * (§7 R6 deliverable #20) as diag.can_boff / diag.can_txdrop — see
+ * control/Inc/telemetry_json.h's schema comment and Core/Src/telem_stream.c,
+ * which reads both counters each emit. The latched ERRB_CAN budget bit
+ * reaches telemetry separately (diag.errb); these are the raw event tallies
+ * behind it.
  */
 uint32_t can_n2k_tx_dropped_count(void);
 

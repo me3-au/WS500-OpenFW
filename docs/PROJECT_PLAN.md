@@ -39,6 +39,7 @@ constrain the code.
 | `PROFILE_SPEC_LFP.md` | Charge-profile engine: state machine, params, JSON schema | 🔨 Draft 1 (8 open Qs §8) |
 | `FLASH_AND_RECOVERY.md` | Backup/rollback/update procedures | ✅ extracted from §6 (2026-07-26); M1 rehearsal pending |
 | `SAFETY.md` | Bench-safety rules | ✅ extracted from §5 (2026-07-26) |
+| `STAGE_A_RUNSHEET.md` | Step-by-step **observation-only** bench procedures (7) executing the §5 Stage-A ladder + the read-only M1 backup half; results-capture table keyed to §0.6 V-items | 🔨 draft 2026-07-28, owner review pending |
 | `test-fw/README.md` | Bring-up test firmware spec | ✅ extracted from §4 (2026-07-26, BKIN + 0x0C/0x10/0x4C items corrected per V1–V3/V7); firmware itself ⬜ |
 | `CLIENT_CONNECTIVITY.md` | Programming/firmware/monitoring across PC/Mac/iOS/Android over USB+CAN (decision) | ✅ |
 | `QUICK_START.md` | Get-going guide (flash, connect, pick profile, run) | 🔨 draft |
@@ -216,7 +217,21 @@ settles most of them):
   an external I²C EEPROM, not a flash page. *(IO_COVERAGE + HW-spec edits applied 2026-07-24.)*
 - **β3380/PA3 = FET/driver temp, not BTS** (V8) — relabel HW-spec §6b/§6c; temp-comp sources
   battery temp from CAN.
-- Still open: CONTROL_SPEC §5.1 internal-NTC dependency + bootstrap max-duty cap (§0.5);
+- ~~CONTROL_SPEC §5.1 internal-NTC dependency~~ — **closed 2026-07-28.** V8 confirms PA3/β3380
+  *is* the driver-stage channel (with a stock 125 °C fault), which is exactly what §5.1's
+  proxy guard needs; §5.1 now cites V8 instead of resting on an inferred channel. The same
+  pass corrected four places where CONTROL_SPEC still promised a **TIM1 BKIN hardware
+  cutoff** that V1+V2 refuted — a spec asserting a hardware backstop that does not exist is
+  the one doc error that could justify weakening a software protection, so §0.1 now carries
+  an explicit "there is no hardware field-cutoff backstop" callout. `IO_COVERAGE.md` and the
+  firmware were already correct; only the spec lagged.
+- **NEW gap found while drafting the Stage-A runsheet (2026-07-28): `WS500_HARDWARE_SPEC.md`
+  §6c's harness pinout table has no field-output wire entry** (it enumerates wires 1–4, 6,
+  8–13). So the one Stage-A procedure that needs to physically find a wire — scoping the
+  field PWM to close V2 at bench tier — cannot say "probe wire N". The runsheet makes
+  physical identification an explicit first sub-step rather than guessing. Fill the table
+  in at the bench and the guesswork disappears; until then this is `bench-pending`.
+- Still open: bootstrap max-duty cap (§0.5);
   re-clone VSR upstream unshallow if pre-2015 license history ever matters.
 - **Update our own `board.h`**: STATOR path is EXTI10 (PA10), not a TIM2 capture channel;
   the `STATOR_TIM = TIM2` define is the timebase, and RPM will be EXTI-edge + CNT-diff.
@@ -246,7 +261,7 @@ settles most of them):
 | 17 | **OSS hygiene** | `CONTRIBUTING.md` (no-GPL + safety-gate rules), `CODE_OF_CONDUCT.md`, `SECURITY.md` (unsafe-charging = security-priority), issue/PR templates incl. hardware-fact provenance template, README badges — all done 2026-07-24 | M0 | ✅ |
 | 18 | **Versioning + release** | `VERSION` (0.1.0-dev) + `Core/Inc/version.h` + `CHANGELOG.md` ✅ (2026-07-24); tag/release flow exercised at M6 | M0→M6 | 🔨 |
 | 19 | **Emulation harness** | Renode model (STM32F072 + peripherals + INA stub) for hardware-free dev/CI; part of the §8 virtual-first strategy with the SIL plant sim (8.1). ✅ **CI-green 2026-07-26**: `renode/` harness boots the real ELF, `ctrl_tick` liveness verified in the `emulation` job. V6 stock-trace use still ⬜ | M0→M1 | ✅ |
-| 20 | **Telemetry / logging** | **USB half ✅ 2026-07-27**: MIT CDC-ACM transport (ST middleware rejected, SLA0044) + 1 Hz JSON telem line + telem-get with the §7 diag surfaces; caps ["cfg","telem"]. Bench-pending: real-host enumeration; release: permanent PID. **CAN half ✅ 2026-07-27** — #9's proprietary fast-packet carries the full snapshot (field effort, binding source + ceiling, temps, RPM state, active profile, fault bits) at 1.5 s. Remaining: surface `can_n2k_bus_off_count()` / `can_n2k_tx_dropped_count()` in the telemetry line (TODO(GH#10)) | M4–M5 | 🔨 |
+| 20 | **Telemetry / logging** | **USB half ✅ 2026-07-27**: MIT CDC-ACM transport (ST middleware rejected, SLA0044) + 1 Hz JSON telem line + telem-get with the §7 diag surfaces; caps ["cfg","telem"]. Bench-pending: real-host enumeration; release: permanent PID. **CAN half ✅ 2026-07-27** — #9's proprietary fast-packet carries the full snapshot (field effort, binding source + ceiling, temps, RPM state, active profile, fault bits) at 1.5 s. **Error counters ✅ 2026-07-28**: `can_boff` / `can_txdrop` (from `can_n2k_bus_off_count()` / `can_n2k_tx_dropped_count()`) now ride the `diag` object of the 1 Hz line, closing the §7 R6 "every error counter is visible" requirement and the `TODO(GH#10)` in `can_n2k.h`; asserted in the pure-layer test (2125 host checks). Remaining: bench host-enumeration only | M4–M5 | 🔨 |
 | 21 | **Robustness / error reporting** | §7 R0–R6 ✅ **implemented + CI-proven 2026-07-27** (GH#27 closed): funnel, windowed checkpoint IWDG, `.noinit` crash ring + reset-cause counters, two-stage M0 fault handlers, flash CRC (report-only) + stack painting + bottom-of-RAM stack, PVD, err budgets. Renode proves the M3 fault-path criterion in CI. Bench-pending: IWDG/PVD behavior, SRAM-parity + BOR option bytes (manual, M1-adjacent); telemetry surface with #20 | M3–M4 | ✅ fw side |
 
 ### 1.1 V2-deferred scope (owner decision, 2026-07-28)
@@ -270,16 +285,46 @@ posture, now the *only* posture in V1):
 
 1. Arbitration runs on **profile + hardware limits only**; the BMS/DVCC ceilings simply
    aren't in the min() (CAN_INTEGRATION.md §0 stance, now V1-final).
-2. **The committed #10 slice needs a default-off gate** — `can_n2k.c` feeds the decoder
-   unconditionally today; small firmware task, tracked in #10's row.
-3. **Temp-comp battery-temp sourcing** (V8: battery temp arrives via CAN/BMS, PA3 is FET
-   temp) has **no V1 source** — CONTROL_SPEC §5.1 must treat battery-temp compensation
-   as V2 (or harness-input-only if one is ever verified). LFP temp *window* enforcement
-   from local sensors is unaffected.
-4. **Tail-current exit with an alternator-side shunt stays disarmed** in V1 (no external
+2. ~~**The committed #10 slice needs a default-off gate**~~ — **resolved by the revert, not
+   by a gate (verified in-tree 2026-07-28).** The `b2da41a` revert took the whole decoder
+   out: `can_drain_rx()` now hands frames only to `n2k_ac_rx()` (address claim) and
+   `rvc_sched_rx()` (RBM election); the Rx filters admit PGN 60928/59904 **plus filter
+   bank 2's RV-C `DC_SOURCE_STATUS_1/2` DGNs, which the RBM election needs**
+   (`can_n2k.c` — election input only, never a control input); and `main.c` passes
+   `bms_ccl_w = CTRL_CEILING_INACTIVE` unconditionally. There is no control-Rx path left
+   to gate. No firmware task.
+3. **⚠ But the revert left a live mis-wiring in the fault ladder.** `main.c` still maps
+   the CAN error budget onto the control core's BMS-loss fault:
+   `if (errb_faulted(ERRB_CAN)) f |= CTRL_FAULT_LOST_BMS;` — and `CTRL_FAULT_LOST_BMS` is
+   in `CTRL_FAULT_LIMP_MASK` (`control/Inc/faults.h`). That mapping was correct when CAN
+   carried BMS ceilings. **In V1 it is not:** CAN is Tx-only telemetry that cannot affect
+   the loop, so a bus-off — a wiring fault, a missing terminator, a Cerbo powered down —
+   now drops a healthy regulator into LIMP for the loss of an input V1 never consumed.
+   The failure is *toward* less charging rather than more, so it is not a hazard, but it
+   is a real availability defect on a live 48 V system and it must not ship. Fix is small
+   (stop synthesising `LOST_BMS` from `ERRB_CAN` in V1; keep the counter in telemetry
+   per #20) but it lands on the **fault ladder**, so it takes the `safety-reviewer` gate
+   per CLAUDE.md. **FIXED + safety-reviewed 2026-07-28** (verdict: cleared — LIMP touches
+   no timer, no clamp, no run-detect gate, so removing it restores availability and
+   removes no protection). Restore the mapping as a V2 entry criterion when CAN-IN
+   returns — **and note the restored mapping is necessary but NOT sufficient**: a BMS that
+   goes silent on a *healthy* bus produces no bus-off and no `ERRB_CAN`, so V2 also needs
+   a per-message freshness timeout on the decoded ceiling itself.
+4. **Battery-temp sourcing has no V1 source at all** (V8: PA3 is FET temp; battery temp
+   would arrive via CAN/BMS, which is V2). CONTROL_SPEC §4.2/§5.1 now treat battery-temp
+   compensation as V2. ⚠ **Correction (safety review, 2026-07-28):** the earlier claim
+   here that "LFP temp *window* enforcement from local sensors is unaffected" was
+   **wrong** — there is no local battery sensor to enforce it with, so the low/high-temp
+   charge window **cannot arm in V1**. That is a protection regression versus the stock
+   firmware on this exact install (stock sources battery temp over CAN), and the fallback
+   — the BMS's own cold-charge disconnect — is itself a load-dump hazard while the
+   pre-disconnect soft-ramp is also V2-deferred. Tracked as a blocking item before M4
+   real-bank charging; needs an annunciated "window unarmed" state plus explicit owner
+   acceptance, not silence.
+5. **Tail-current exit with an alternator-side shunt stays disarmed** in V1 (no external
    N2K monitor to re-arm it) — battery-side shunt is the V1 recommendation
    (CAN_INTEGRATION.md §4).
-5. The 2026-07-27 safety-review preconditions (CVL consumer, pre-disconnect,
+6. The 2026-07-27 safety-review preconditions (CVL consumer, pre-disconnect,
    `bms_required`) become **V2 entry criteria**, not M3/M5 blockers.
 
 ## 2. Milestones (safety and recovery come before any flash write)
@@ -332,9 +377,27 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
   cadence engine + bxCAN glue @250 kbit/s — the regulator now has a complete
   telemetry-out path in firmware, host-tested but never on a wire.
   **RV-C Tx (#10a)** landed the same day.
-  **Remaining:** INA2xx I²C transfers 🔨 (bus caveat GH#36 — bench-gated, and
-  test-fw's `i2cscan` is now the tool for it), inner-loop gain tuning (GH#34),
-  and bench bring-up. **CAN Rx (#10) is NOT an M3 item — it is v2** (see the
+  **Remaining:** ~~INA2xx I²C transfers~~ — **the transfers are written**
+  (re-checked 2026-07-28): `ina2xx.c` does bounded-retry 16-bit big-endian
+  `HAL_I2C_Mem_Read/Write`, CVRF-gated sampling, software `I = V_shunt/R_shunt`
+  with CALIBRATION left at POR, and the §7 R6 re-init rung with a re-entry
+  guard. What is actually outstanding is **which bus** (GH#36): the driver
+  brings up **I2C1** while V7 says the board runs both devices on **I2C2** —
+  bench-gated per the §0.6 evidence precedence, and test-fw's `i2cscan` is the
+  tool for it. Also remaining: inner-loop gain tuning (GH#34), the §1.1
+  consequence-3 `LOST_BMS`↔`ERRB_CAN` fault-ladder fix, and bench bring-up.
+  **Clock source DECIDED 2026-07-28 (GH#38): SYSCLK = HSE 8 MHz → PLL ×6 →
+  48 MHz, matching stock; HSI48 stays as the USB clock only.** `board.c` is
+  crystal-less today (HSI48 + CRS synced to USB SOF), but this regulator
+  normally runs with **no USB host attached**, so CRS never syncs and HSI48
+  free-runs at up to ±3 % — well outside CAN's ~±0.5 % bit-timing budget. The
+  crystal is known populated (V2 + V6, and stock blocks on HSERDY on a working
+  unit), so no bench step is owed. **Not a safety item:** the rotor clamp is a
+  duty *ratio* and is independent of PWM carrier frequency, so clock drift
+  cannot loosen it. HSE start-up failure must fall back to HSI48 and keep
+  charging with CAN marked untrustworthy — never hang, never safe-state.
+  Implementation is sequenced behind the Renode work because the emulated RCC
+  may not raise HSERDY (cf. `renode/v6-stubs/`). **CAN Rx (#10) is NOT an M3 item — it is v2** (see the
   deliverable row); do not pull it forward. (§7 robustness
   layer #21 is done, CI-proven 2026-07-27). *Exit:* closed-loop CV hold on the
   bench supply into a dummy load, with fault cutoff verified; IWDG active; an induced
@@ -565,7 +628,14 @@ a 48 V system (§5). Four virtual layers, cheapest first; all run in CI:
 a real trace to validate the plant model + rotor clamp against — 25 % field clamp,
 alternator output 140 A / 7.6 kW at ~2330 RPM / 25 % field, field ramp ≈2 %/s, FET-temp rise
 31→45 °C under 140 A load, RPM sensing valid under real stator signal. Archive
-`ws500_chargerun.log` (and a decoded CSV) as a SIL fixture. Stage-A serial capability
+`ws500_chargerun.log` (and a decoded CSV) as a SIL fixture. **Note (2026-07-28):**
+`.gitignore` now blocks `*.log` and bench-capture CSVs by default because this repo is
+public and a `$RAS:` dump carries the regulator password in plain text
+(STAGE_A_RUNSHEET §Procedure 1). This particular capture is an `AST` *status* stream, not
+a config dump, so it holds no password — but it is still install-identifying. Commit the
+**decoded CSV** as the fixture and leave the raw log local; if the raw log is genuinely
+wanted in-tree, it takes a deliberate `git add -f` after a read-through, never a casual
+`git add -A`. Stage-A serial capability
 (read-only `$` query + passive monitor via PowerShell `SerialPort`) is proven and repeatable.
 
 *Gate:* Stage C in §5 (first custom-firmware flash) requires 8.1–8.4 green in CI, plus the

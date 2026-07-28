@@ -111,8 +111,11 @@ Milestones and the deliverables map live in `PROJECT_PLAN.md`.
 - **The control core is `float`, pure C11, no dynamic allocation, no HAL.** Keep it that
   way — it's what lets us test without hardware.
 - **Add a unit test** for any control-core change (`control/test/`), and keep the safety
-  invariants: field-open on uncertainty; raw-signal safety comparators independent of the
-  control path.
+  invariants: field-open on uncertainty; safety limits evaluated against **raw** sensor
+  values on a path independent of the regulation logic, so a bug in the loop cannot
+  suppress its own cutoff. Note these checks are **software** — this board routes no
+  hardware break input (`BDTR.BKE = 0`, PROJECT_PLAN §0.6 V1/V2), so there is nothing
+  underneath them to catch a mistake.
 - Match the authoritative specs; if you change behavior, change the spec too.
 - One logical change per PR; CI (tests + firmware) must be green.
 - By contributing you agree your work is licensed MIT, and that it contains **no GPL code**

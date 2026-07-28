@@ -231,10 +231,12 @@ void config_init(void)
 
     /* Persisted config wins over the placeholders above when it is both intact
      * and valid.
-     * TODO(§7 / module #21): a rejected or unreadable store is currently silent
+     * TODO(GH#35): a rejected or unreadable store is currently silent
      * — s_store_status / s_store_val_err below are the hookup point for the
      * fault + telemetry surface (INFO "using defaults", WARN "config rejected:
-     * <cfg_err_str>"), which does not exist yet. */
+     * <cfg_err_str>"). The telemetry `diag` object is where it belongs; it is
+     * NOT a control fault (ERRB_EEPROM maps to none — see main.c for why a
+     * dead config store cannot make charging unsafe). */
     config_load_persisted();
 
     const cfg_msg_host_t host = {
