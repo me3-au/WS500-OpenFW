@@ -407,7 +407,18 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
   deliverable row); do not pull it forward. (§7 robustness
   layer #21 is done, CI-proven 2026-07-27). *Exit:* closed-loop CV hold on the
   bench supply into a dummy load, with fault cutoff verified; IWDG active; an induced
-  HardFault provably lands in safe state + crash record + clean reboot.
+  HardFault provably lands in safe state + clean reboot.
+  **Added 2026-07-28 (GH#34): a ≥10 min CV-hold ripple/duty record is a HARD exit
+  criterion, not an optional measurement.** §5.3's derivation puts the CV channel's
+  phase margin at only **≈13–15°** against a 45° norm. The decision (PM) is *not* to
+  retune `KV` blind: SIL shows convergent bounded behaviour, and safety does not rest
+  on that margin — the OV path and the rotor clamp bound the worst case at rated rotor
+  current regardless. But an underdamped loop is exactly what a bench measurement
+  settles cheaply and what guesswork settles badly, so M3 does not close until the
+  record exists. Decision rule already written into §5.3: halve `KV` or shorten τ if
+  CV-hold chatter exceeds ±0.005 V/cell. Two companion measurements ride along —
+  rotor τ = L/R via a duty step on the dummy load (if τ > 50 ms, derate `KP` 2× first)
+  and dI_field/de across RPM, which closes the high-RPM margin caveat.
 - **M4 — Config + client app.** Config schema (per #6a), flash config store (CRC+version),
   `ws500ctl` read/write/verify, FW update via CLI, telemetry stream (#20). *Exit:* config
   round-trips; FW updates via `ws500ctl`; config survives an update.
