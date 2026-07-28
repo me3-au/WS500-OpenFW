@@ -22,6 +22,46 @@ jobs:
             -lm -o control_tests
           ./control_tests
 
+  # Host-side Python tooling (tools/*). These packages are separate
+  # distributions with their own pyproject.toml, so each is installed and run
+  # in its own step rather than collected from tools/ — a single rootdir
+  # collection makes pytest derive the same package name ("tests") for all of
+  # them and collide on duplicate module basenames.
+  #
+  # Why this job exists: tools/ws500ctl had a test suite that CI never ran, and
+  # tools/stage_a_capture arrived with 26 more. stage_a_capture is the only
+  # code in this repo that opens a serial port to the LIVE regulator, and its
+  # read-only guarantee (a command whitelist that every write() call is gated
+  # on) is a safety property. An untested safety property is a claim, not a
+  # guarantee — so it gets a gate like everything else.
+  tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: stage_a_capture (Stage-A read-only capture)
+        working-directory: tools/stage_a_capture
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+          pytest -q
+
+      - name: stock_config_import (#6a stock-dump translator)
+        working-directory: tools/stock_config_import
+        run: |
+          pip install -e ".[test]"
+          pytest -q
+
+      - name: ws500ctl (client CLI)
+        working-directory: tools/ws500ctl
+        run: |
+          pip install -e ".[test]"
+          pytest -q
+
   sil:
     runs-on: ubuntu-latest
     steps:

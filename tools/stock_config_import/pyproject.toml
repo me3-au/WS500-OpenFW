@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stock-config-import"
+version = "0.1.0.dev0"
+description = "Translate an archived stock WS500 $-protocol dump into a PROFILE_SPEC Sec7 JSON proposal (Decision #6a)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[project.scripts]
+stock-config-import = "stock_config_import.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["stock_config_import*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

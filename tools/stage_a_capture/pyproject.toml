@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stage-a-capture"
+version = "0.1.0.dev0"
+description = "Read-only USB $-protocol capture of STAGE_A_RUNSHEET.md Procedure 1"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "pyserial>=3.5",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[project.scripts]
+stage-a-capture = "stage_a_capture.capture:main"
+
+[tool.setuptools.packages.find]
+include = ["stage_a_capture*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

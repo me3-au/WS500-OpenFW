@@ -111,6 +111,22 @@ session logging is documented in the Wakespeed Comms & Config Guide as an altern
 but this runsheet follows the **already-proven, repeatable PowerShell `SerialPort`
 method** cited in `PROJECT_PLAN.md` §8, so no new tooling is introduced).
 
+**Convenience automation (optional):** `tools/stage_a_capture` runs steps 2-7 below for you
+— it opens the port, drains whatever's already flowing, sends `$RAS:@` then `$RCP:1@`..
+`$RCP:8@`..`$RCP:0@` in order (and *only* those — read-only by construction, see that
+tool's README), waits for each `AOK;`/`NAK;` terminator before sending the next command,
+then lets the passive `AST;` stream run for a configurable window, writing both a raw and
+a password-redacted log file. It is a convenience, **not a replacement** for the manual
+steps below — this runsheet's PowerShell procedure remains the documented fallback if the
+tool misbehaves or Python/`pyserial` aren't available at the bench. See
+`tools/stage_a_capture/README.md` for install/usage; a short summary:
+
+```sh
+cd C:\Users\adren\AppDev\Wakespeed\WS500-OpenFW\tools\stage_a_capture
+pip install -e ".[test]"
+python -m stage_a_capture.capture --port <COM_PORT> --outdir C:\Users\adren\stage-a-logs
+```
+
 **Command reference** (from `docs/Wakespeed-Communications-and-Configuration-Guide-v2.6.1-1.pdf`,
 already an in-repo gitignored reference per `PROJECT_PLAN.md` §0 — consult it directly
 for anything not covered here): commands begin with `$`, end with CR/LF or `@`, and the
@@ -156,8 +172,10 @@ runsheet cites; record whatever actually comes back).
 > it was set with a leading `.` (hidden). This repo is **public**
 > (`PROJECT_PLAN.md` header). Treat the raw log as sensitive: keep it out of the public
 > repo unless the `NPC;` line (and any other operationally sensitive field) is redacted
-> first. The client-app import tool (deliverable #6a) should consume the raw file from
-> wherever it's archived locally, not from a committed copy.
+> first. `tools/stage_a_capture` writes a redacted copy automatically alongside the raw
+> one for exactly this reason. The client-app import tool (deliverable #6a,
+> `tools/stock_config_import`) should consume the raw file from wherever it's archived
+> locally, not from a committed copy — it never needs the password field either way.
 
 **Pass/fail:** PASS = both `$RAS:` and all 8 `$RCP:n` return well-formed replies ending
 in `AOK;` and the log is archived. **Unexpected result → stop:** a `NAK;` on a
