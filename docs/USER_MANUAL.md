@@ -102,6 +102,46 @@ behavior. Switching profiles never adds states.
 - **Engine budget & belt** *(needs an RPM source):* a Watts-vs-RPM curve keeps engine
   load and belt torque in bounds; near-zero at idle, rising with speed.
 
+### Who's in charge: your BMS, your GX, and the regulator
+
+Short answer: **nobody is "in charge". The most cautious limit wins, whoever set it.**
+
+There's no pecking order where the BMS overrules the regulator or a Cerbo overrules
+the BMS. Every limit that's currently valid applies at the same time, and the lowest
+one decides. That has one consequence worth understanding, because it's the whole
+safety argument:
+
+> **Anything outside the regulator can only ever make it charge *less*. Nothing
+> outside it can make it charge *more*.**
+
+A BMS saying "60 A max" lowers your output if 60 A is the lowest limit going. A BMS
+saying "300 A is fine" changes nothing — your alternator rating, wiring, thermal
+limit and rotor protection are all still there, and one of them will be lower. Same
+for a charge-voltage limit: a BMS can pull the target voltage *down* below your
+profile's, never push it up.
+
+If a device that was talking to the regulator goes quiet, the regulator does **not**
+keep obeying the last thing it heard, and it does **not** start charging freely. It
+drops back to its own profile and hardware limits, tells you it lost the link, and
+carries on more conservatively. Stale information is treated as no information.
+
+On top of all that sit a few things that aren't limits at all — they're stops. A
+battery protection alarm, a fault, a stationary engine, and above all the **rotor
+protection** of §6. The rotor clamp is the floor beneath everything: no setting, no
+BMS, and no network message can widen it.
+
+**A note if you run a Victron GX / Cerbo.** DVCC is Victron's system-level scheme, and
+a GX distributes those limits to *Victron* equipment. It does not send them to
+third-party devices, and this regulator is one. So a charge-current limit you type
+into the GX screen does **not** reach the regulator. Set your install limits on the
+regulator itself rather than assuming the GX holds it back.
+
+> **Current status:** in **v1 the regulator ignores the CAN bus entirely for control
+> purposes** — it transmits telemetry and receives nothing that can affect charging.
+> Everything above about BMS and DVCC inputs describes **v2**. In v1 the limits in
+> force are exactly the ones you commissioned, plus the regulator's own thermal, rotor
+> and fault protections.
+
 ## 6. Rotor protection (the 48 V / 12 V-rotor problem)
 
 Most 48 V alternators use a **12 V rotor**. The regulator continuously computes a
