@@ -8,7 +8,10 @@
  *
  * Layout on the 2 KB 24C16 (PROJECT_PLAN §0.6 V7):
  *
- *   0x000 .. 0x3FF   slot A   (1024 B; record is CFG_RECORD_V1_BYTES = 310)
+ *   0x000 .. 0x3FF   slot A   (1024 B; record is CFG_RECORD_V1_BYTES = 312 at
+ *                    schema 2 — the literal here is prose that has already
+ *                    drifted once, so trust the macro and the static asserts
+ *                    in config_codec.c, not this number)
  *   0x400 .. 0x7FF   slot B   (1024 B)
  *
  * Power-fail safety comes from never writing the slot that is currently live:

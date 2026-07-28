@@ -82,6 +82,8 @@ static inline ctrl_config_t cfg_test_baseline(void)
     c.globals.allow_full_field_48v = false;
     c.globals.limp_vcell          = 3.30f; /* mirrors v_limp */
     c.globals.limp_power_cap_w    = 0.25f * CFGT_MAX_W;
+    c.globals.batt_temp_src       = CTRL_BATT_TEMP_NONE;  /* GH#40, off by default */
+    c.globals.require_batt_temp   = false;
 
     /* CONTROL_SPEC §2.1 limit set. */
     c.limits.battery_c_limit    = 0.5f;

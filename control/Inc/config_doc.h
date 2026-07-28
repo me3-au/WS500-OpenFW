@@ -44,6 +44,10 @@
  * `cv_hold_exit_min`, `skip_bulk_vcell`, `skip_bulk_soc_pct`, `limp_vcell`,
  * `limp_power_cap_w`, and `profiles[].reserved` (the codec's
  * CFG_PROF_FLAG_RESERVED, which §7 already spells `"reserved": true`).
+ * `global.batt_temp_src` (string enum "none"/"adc_a"/"adc_b") and
+ * `global.require_batt_temp` (bool) — GH#40, schema_version 2, PROFILE_SPEC
+ * §3.1. Not in the §7 sketch at all: v1 was believed to have no battery-temp
+ * source when §7 was written.
  *
  * `profiles[].name` is EMITTED from a firmware-side §4.1 name table and
  * accepted-but-not-stored on parse (schema v1 has no string storage). It is a

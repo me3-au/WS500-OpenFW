@@ -35,6 +35,11 @@ static const char *const PRIM_NAMES[] = {
     NULL, "v_bulk", "v_bulk_cons", "v_float", "v_float_cons", "v_limp"
 };
 
+/* Indexed by ctrl_batt_temp_src_t (GH#40). Bench-pending channel binding —
+ * control.h's ctrl_batt_temp_src_t doc comment has the full "why default
+ * none" reasoning. */
+static const char *const BATT_TEMP_SRC_NAMES[] = { "none", "adc_a", "adc_b" };
+
 const char *cfg_doc_profile_name(uint8_t id)
 {
     if (id < 1u || id > CFG_PROFILE_COUNT) return "";
@@ -116,6 +121,12 @@ bool cfg_doc_emit(cfg_json_w_t *w, const ctrl_config_t *cfg, const char *fw)
     cfg_json_w_key(w, "skip_bulk_soc_pct");  emit_i8(w, g->skip_bulk_soc_pct);
     cfg_json_w_key(w, "limp_vcell");         cfg_json_w_f32(w, g->limp_vcell);
     cfg_json_w_key(w, "limp_power_cap_w");   cfg_json_w_f32(w, g->limp_power_cap_w);
+    /* GH#40 — schema 2. batt_temp_src is a closed enum, spelled the same way
+     * rest.mode is (deviation-free wire name for a control.h enum). */
+    cfg_json_w_key(w, "batt_temp_src");
+    cfg_json_w_str(w, (g->batt_temp_src <= CTRL_BATT_TEMP_ADC_B)
+                      ? BATT_TEMP_SRC_NAMES[g->batt_temp_src] : "none");
+    cfg_json_w_key(w, "require_batt_temp");  cfg_json_w_bool(w, g->require_batt_temp);
     cfg_json_w_end(w);
 
     cfg_json_w_key(w, "profiles");
@@ -407,6 +418,25 @@ static bool parse_global(dc_t *d)
         else if (!strcmp(k, "limp_power_cap_w"))   ok = rd_f32(d, k, &g->limp_power_cap_w);
         else if (!strcmp(k, "limp_vcell"))       { ok = rd_f32(d, k, &g->limp_vcell);
                                                    d->saw_limp_vcell = ok; }
+        else if (!strcmp(k, "batt_temp_src")) {
+            /* GH#40: string enum, same shape as profiles[].rest.mode. An
+             * unrecognised spelling is stored OUT OF ENUM on purpose (mirrors
+             * parse_rest()'s rest_mode handling below) so ctrl_config_validate()
+             * returns CFG_ERR_RANGE_BATT_TEMP_SRC under its own name instead of
+             * this layer guessing what the client meant. */
+            if (cfg_json_peek(d->j) != CFG_JSON_T_STR) { ok = dc_fail(d, CFG_DOC_ERR_TYPE, k); }
+            else {
+                char s[CFG_JSON_KEY_MAX];
+                bool tr = false;
+                if (!cfg_json_str(d->j, s, (int)sizeof s, &tr)) { ok = dc_json(d); }
+                else if (!strcmp(s, "none"))    { g->batt_temp_src = CTRL_BATT_TEMP_NONE;  ok = true; }
+                else if (!strcmp(s, "adc_a"))   { g->batt_temp_src = CTRL_BATT_TEMP_ADC_A; ok = true; }
+                else if (!strcmp(s, "adc_b"))   { g->batt_temp_src = CTRL_BATT_TEMP_ADC_B; ok = true; }
+                else { g->batt_temp_src = (ctrl_batt_temp_src_t)0xFFu; ok = true; }
+            }
+        }
+        else if (!strcmp(k, "require_batt_temp"))
+                                                    ok = rd_bool(d, k, &g->require_batt_temp);
         /* "topbalance_days": §3.1/§7 parameter with no control.h field
          * (config_doc.h deviation 2) — counted, not stored. */
         else                                       ok = dc_unknown(d);

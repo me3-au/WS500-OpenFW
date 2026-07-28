@@ -109,7 +109,9 @@ static bool config_equal(const ctrl_config_t *a, const ctrl_config_t *b)
         !same_f(x->rotor_v_max, y->rotor_v_max) ||
         x->allow_full_field_48v != y->allow_full_field_48v ||
         !same_f(x->limp_vcell, y->limp_vcell) ||
-        !same_f(x->limp_power_cap_w, y->limp_power_cap_w)) return false;
+        !same_f(x->limp_power_cap_w, y->limp_power_cap_w) ||
+        x->batt_temp_src != y->batt_temp_src ||
+        x->require_batt_temp != y->require_batt_temp) return false;
 
     if (!same_f(a->limits.battery_c_limit, b->limits.battery_c_limit) ||
         !same_f(a->limits.wiring_limit_a, b->limits.wiring_limit_a) ||
@@ -160,20 +162,20 @@ static void c2_codec(void)
 
     const size_t n = cfg_encode(&src, 0x11223344u, buf, sizeof buf);
     CHECK(n == CFG_RECORD_V1_BYTES);
-    CHECK(CFG_RECORD_V1_BYTES == 310u);          /* 16 header + 290 payload + 4 CRC */
+    CHECK(CFG_RECORD_V1_BYTES == 312u);          /* 16 header + 292 payload + 4 CRC */
 
     /* Golden header — byte for byte, little-endian (config_codec.h layout). */
     CHECK(buf[0] == 'W' && buf[1] == '5' && buf[2] == 'C' && buf[3] == 'F');
-    CHECK(buf[4] == 0x01u && buf[5] == 0x00u);   /* schema_version = 1 */
+    CHECK(buf[4] == 0x02u && buf[5] == 0x00u);   /* schema_version = 2 (GH#40) */
     CHECK(buf[6] == 0x00u && buf[7] == 0x00u);   /* flags reserved */
     CHECK(buf[8] == 0x44u && buf[9] == 0x33u &&
           buf[10] == 0x22u && buf[11] == 0x11u); /* generation 0x11223344 LE */
-    CHECK(buf[12] == 0x22u && buf[13] == 0x01u); /* payload_len 290 = 0x0122 LE */
+    CHECK(buf[12] == 0x24u && buf[13] == 0x01u); /* payload_len 292 = 0x0124 LE */
     CHECK(buf[14] == 0x00u && buf[15] == 0x00u); /* reserved */
 
     /* CRC trails the record and covers everything before it, with no gaps. */
-    const uint32_t crc = (uint32_t)buf[306] | ((uint32_t)buf[307] << 8) |
-                         ((uint32_t)buf[308] << 16) | ((uint32_t)buf[309] << 24);
+    const uint32_t crc = (uint32_t)buf[308] | ((uint32_t)buf[309] << 8) |
+                         ((uint32_t)buf[310] << 16) | ((uint32_t)buf[311] << 24);
     CHECK(crc == cfg_crc32(buf, CFG_HEADER_BYTES + CFG_PAYLOAD_V1_BYTES));
 
     /* Determinism: same input, same bytes. */
@@ -254,15 +256,19 @@ static void c3_rejection(void)
     CHECK(cfg_decode(t, sizeof t, &sink, NULL) == CFG_DEC_ERR_MAGIC);
 
     memcpy(t, buf, sizeof t);
-    t[4] = 2u;                                   /* schema_version 2 */
+    t[4] = 3u;                                   /* schema_version 3 (3 != CFG_SCHEMA_VERSION==2) */
+    CHECK(cfg_decode(t, sizeof t, &sink, NULL) == CFG_DEC_ERR_VERSION);
+    memcpy(t, buf, sizeof t);
+    t[4] = 1u;                                   /* schema_version 1 — the OLD version is
+                                                   * just as wrong as any other non-native one */
     CHECK(cfg_decode(t, sizeof t, &sink, NULL) == CFG_DEC_ERR_VERSION);
 
     memcpy(t, buf, sizeof t);
-    t[12] = 0x20u;                               /* payload_len 288 */
+    t[12] = 0x20u;                               /* payload_len 288 (real is 292) */
     CHECK(cfg_decode(t, sizeof t, &sink, NULL) == CFG_DEC_ERR_LEN);
 
     memcpy(t, buf, sizeof t);
-    t[306] ^= 0xFFu;                             /* CRC byte */
+    t[308] ^= 0xFFu;                             /* CRC byte (payload grew to 292, GH#40) */
     CHECK(cfg_decode(t, sizeof t, &sink, NULL) == CFG_DEC_ERR_CRC);
 
     CHECK(cfg_decode(buf, CFG_HEADER_BYTES - 1u, &sink, NULL) == CFG_DEC_ERR_SHORT);
@@ -462,6 +468,18 @@ static void c5_validator(void)
     EXPECT_ERR(c.globals.rotor_v_max = 15.0f,       CFG_OK);      /* override is legal */
     EXPECT_ERR(c.globals.limp_power_cap_w = NAN,    CFG_ERR_SANITY_LIMP_POWER_CAP);
     EXPECT_ERR(c.globals.limp_power_cap_w = -1.0f,  CFG_ERR_SANITY_LIMP_POWER_CAP);
+
+    /* GH#40 battery-temp charge-window gate: batt_temp_src is a closed enum,
+     * NONE/ADC_A/ADC_B all legal, anything else (including a decode-verbatim
+     * corrupt value) is a named rejection, never coerced to NONE. */
+    EXPECT_ERR(c.globals.batt_temp_src = CTRL_BATT_TEMP_NONE,        CFG_OK);
+    EXPECT_ERR(c.globals.batt_temp_src = CTRL_BATT_TEMP_ADC_A,       CFG_OK);
+    EXPECT_ERR(c.globals.batt_temp_src = CTRL_BATT_TEMP_ADC_B,       CFG_OK);
+    EXPECT_ERR(c.globals.batt_temp_src = (ctrl_batt_temp_src_t)3,    CFG_ERR_RANGE_BATT_TEMP_SRC);
+    EXPECT_ERR(c.globals.batt_temp_src = (ctrl_batt_temp_src_t)255,  CFG_ERR_RANGE_BATT_TEMP_SRC);
+    /* require_batt_temp is a plain bool — both values are legal on their own. */
+    EXPECT_ERR(c.globals.require_batt_temp = true,  CFG_OK);
+    EXPECT_ERR(c.globals.require_batt_temp = false, CFG_OK);
 
     /* §2.1 limit set: <= 0 is "unset", NaN/inf/negative are not. */
     EXPECT_ERR(c.limits.battery_c_limit = 0.0f,     CFG_OK);

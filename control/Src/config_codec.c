@@ -168,6 +168,10 @@ static void encode_payload(const ctrl_config_t *cfg, uint8_t *b, size_t *o)
     }
 
     put_u8(b, o, cfg->active_profile);
+
+    /* --- GH#40 tail append (schema 2): battery-temp charge-window gate --- */
+    put_u8(b, o, (uint8_t)g->batt_temp_src);
+    put_u8(b, o, g->require_batt_temp ? 1u : 0u);
 }
 
 static void decode_payload(const uint8_t *b, size_t *o, ctrl_config_t *cfg)
@@ -224,6 +228,13 @@ static void decode_payload(const uint8_t *b, size_t *o, ctrl_config_t *cfg)
     }
 
     cfg->active_profile = get_u8(b, o);
+
+    /* --- GH#40 tail append (schema 2): battery-temp charge-window gate ---
+     * Decoded VERBATIM, same reasoning as rest_mode above: an out-of-enum
+     * batt_temp_src must reach the validator as a named rejection, not be
+     * silently coerced to NONE (which would hide a corrupt record). */
+    g->batt_temp_src    = (ctrl_batt_temp_src_t)get_u8(b, o);
+    g->require_batt_temp = (get_u8(b, o) != 0u);
 }
 
 /* ---- framing --------------------------------------------------------------- */
@@ -309,5 +320,7 @@ _Static_assert(CFG_POFF_PROFILES == CFG_POFF_LIMITS + CFG_LIMITS_BYTES,
 _Static_assert(CFG_POFF_ACTIVE   == CFG_POFF_PROFILES +
                                     CFG_PROFILE_COUNT * CFG_PROFILE_BYTES,
                "profile block size mismatch");
-_Static_assert(CFG_PAYLOAD_V1_BYTES == CFG_POFF_ACTIVE + 1u,
+_Static_assert(CFG_POFF_BATT_TEMP == CFG_POFF_ACTIVE + 1u,
+               "active_profile block size mismatch");
+_Static_assert(CFG_PAYLOAD_V1_BYTES == CFG_POFF_BATT_TEMP + CFG_BATT_TEMP_BYTES,
                "payload length mismatch");

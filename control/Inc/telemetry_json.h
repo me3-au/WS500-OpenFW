@@ -19,7 +19,7 @@
  *  "state":N,"standby":N,"profile":N,"field":F,"bind":N,"bind_w":F,
  *  "faults":U,"sev":N,
  *  "cells":N,"vbat":F,"vcell":F,"amps":F,"watts":F,
- *  "alt_c":F,"batt_c":F,"rpm":F,"rpm_st":N,
+ *  "alt_c":F,"batt_c":F,"batt_armed":B,"rpm":F,"rpm_st":N,
  *  "diag":{"resets":[U*7],"cause":U,"boots":U,
  *          "crashes":N,"crash_kind":N,"crash_pc":U,
  *          "crc":"ok|mismatch|unpatched|unavail",
@@ -28,12 +28,21 @@
  *          "can_boff":U,"can_txdrop":U}}
  *
  * N = small integer, U = unsigned 32-bit decimal, F = float (non-finite → null,
- * the same "unset travels as null" rule the config wire uses, config_json.h).
- * Enum-valued fields carry the control core's own numbering (ctrl_state_t,
- * ctrl_standby_reason_t, ctrl_bind_src_t, ctrl_severity_t, ctrl_rpm_state_t,
- * ctrl_fault_bits_t) — the client owns pretty-printing, exactly as it owns the
- * config file (decision #6a-B). "crc" is a string because its four values are
- * a closed set this header defines, not a control-core enum.
+ * the same "unset travels as null" rule the config wire uses, config_json.h),
+ * B = JSON true/false. Enum-valued fields carry the control core's own
+ * numbering (ctrl_state_t, ctrl_standby_reason_t, ctrl_bind_src_t,
+ * ctrl_severity_t, ctrl_rpm_state_t, ctrl_fault_bits_t) — the client owns
+ * pretty-printing, exactly as it owns the config file (decision #6a-B). "crc"
+ * is a string because its four values are a closed set this header defines,
+ * not a control-core enum.
+ *
+ * "batt_armed" (GH#40, CONTROL_SPEC §4.2): true iff the battery-temp
+ * charge-window gate CAN arm this tick (mirrors control.c's own
+ * !isnan(batt_temp_c) gate exactly). `batt_c:null` alone is not annunciation
+ * — it is indistinguishable from a transient sensor dropout — so this key is
+ * the explicit "the low/high-temp window is not evaluating anything right
+ * now" signal §4.2 requires a v1 build to surface. false on every v1 build
+ * that ships with `batt_temp_src: none` (the shipped default).
  *
  * "diag" member meanings (all sourced from PROJECT_PLAN §7 surfaces):
  *   resets       lifetime per-cause reset counters, index order fixed by

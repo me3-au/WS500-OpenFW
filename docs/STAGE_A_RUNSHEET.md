@@ -309,6 +309,22 @@ connection before assuming a driver problem).
 
 ---
 
+> **⚠ Gate on the NTC channel binding (added 2026-07-28, GH#8 / GH#40 / GH#43).**
+> While you have the harness accessible, the other high-value measurement is
+> **which of PA1/PA2 carries harness wire 4 (Alternator Temp Sense) and which
+> carries wire 9 (Battery Temp Sense)** — inject a known resistance on each wire
+> in turn and see which ADC slot moves. That binding is what arms the LFP
+> low-temperature charge cutoff in V1 (GH#40), so it is worth doing.
+>
+> **But do NOT then configure `batt_temp_src: adc_a`, even if the measurement
+> says the battery probe is on PA1.** The app currently feeds alternator
+> over-temp and the thermal governor from channel A only, and `alt_temp2_c` is
+> read and discarded — so binding `adc_a` would silently disable alternator
+> thermal protection entirely (GH#43, found by safety review). `adc_b` is safe.
+> If the measurement comes back "battery probe is on PA1", record it, leave
+> `batt_temp_src: none`, and wait for GH#43. Nothing here is urgent enough to
+> charge a live bank with the alternator's over-temp guard switched off.
+
 ### Procedure 5 — Battery/alt sense vs reference DMM
 
 **Purpose:** validate the 34.33:1 voltage-divider scaling (§0.6 V4) and the INA226

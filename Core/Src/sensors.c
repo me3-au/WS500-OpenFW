@@ -135,7 +135,7 @@ static float ntc_temp_c(unsigned slot, float beta)
     return (1.0f/invT) - 273.15f;
 }
 
-void sensors_read(sensor_readings_t *out)
+void sensors_read(sensor_readings_t *out, ctrl_batt_temp_src_t batt_temp_src)
 {
     const float vdda = sensors_vdda();                 /* mV */
     const float lsb  = vdda / 4095.0f / 1000.0f;       /* V per count at the pin */
@@ -146,12 +146,35 @@ void sensors_read(sensor_readings_t *out)
     /* Temperatures (stock binary disasm 2026-07-23, PROJECT_PLAN §0.6 V8):
      * PA1/PA2 = beta-3950 alternator/probe NTCs (which is which: bench);
      * PA3 = beta-3380 FET/driver-stage over-temp sensor (stock 125C fault) —
-     * NOT battery. Battery temp for temp-comp arrives via CAN/BMS (TODO: plumb
-     * from can_n2k); report NAN until then so control treats it as absent. */
-    out->alt_temp_c    = ntc_temp_c(SENSOR_CH_TEMP_A1,  SENSOR_NTC_BETA_ALT);
-    out->alt_temp2_c   = ntc_temp_c(SENSOR_CH_TEMP_A2,  SENSOR_NTC_BETA_ALT);
+     * NOT battery. */
+    const float ntc_a1 = ntc_temp_c(SENSOR_CH_TEMP_A1, SENSOR_NTC_BETA_ALT);
+    const float ntc_a2 = ntc_temp_c(SENSOR_CH_TEMP_A2, SENSOR_NTC_BETA_ALT);
     out->driver_temp_c = ntc_temp_c(SENSOR_CH_TEMP_FET, SENSOR_NTC_BETA_FET);
-    out->batt_temp_c   = NAN;   /* was PA3 — mislabeled; see §0.6 V8 */
+
+    /* GH#40: batt_temp_src (config, default NONE — see control.h
+     * ctrl_batt_temp_src_t for why the default must stay NONE) routes
+     * whichever of PA1/PA2 it names to batt_temp_c; the OTHER channel keeps
+     * reporting as an alternator/probe temp exactly as before. NONE reports
+     * batt_temp_c NAN and both channels stay alternator-side, unchanged from
+     * the pre-GH#40 behavior. */
+    switch (batt_temp_src) {
+    case CTRL_BATT_TEMP_ADC_A:
+        out->alt_temp_c  = NAN;
+        out->alt_temp2_c = ntc_a2;
+        out->batt_temp_c = ntc_a1;
+        break;
+    case CTRL_BATT_TEMP_ADC_B:
+        out->alt_temp_c  = ntc_a1;
+        out->alt_temp2_c = NAN;
+        out->batt_temp_c = ntc_a2;
+        break;
+    case CTRL_BATT_TEMP_NONE:
+    default:
+        out->alt_temp_c  = ntc_a1;
+        out->alt_temp2_c = ntc_a2;
+        out->batt_temp_c = NAN;
+        break;
+    }
 
     /* Charge current + local bus voltage: INA2xx at the shunt (battery or
      * alternator side per ShuntAtBat) — NOT the internal ADC. */

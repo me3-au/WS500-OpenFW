@@ -63,6 +63,7 @@ typedef enum {
     CFG_ERR_SANITY_ROTOR_RATED,     /* rotor_rated_v finite and > 0 (duty_max divisor) */
     CFG_ERR_SANITY_ROTOR_VMAX,      /* rotor_v_max finite and > 0, or NAN = use rated */
     CFG_ERR_SANITY_LIMP_POWER_CAP,  /* limp_power_cap_w finite and >= 0 */
+    CFG_ERR_RANGE_BATT_TEMP_SRC,    /* batt_temp_src not one of NONE/ADC_A/ADC_B (GH#40) */
     CFG_ERR_SANITY_BATTERY_C,       /* battery_c_limit finite and >= 0 */
     CFG_ERR_SANITY_WIRING_A,        /* wiring_limit_a finite and >= 0 */
     CFG_ERR_SANITY_ALT_A,           /* alternator_limit_a finite and >= 0 */

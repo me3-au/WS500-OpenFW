@@ -684,11 +684,12 @@ static void p5_fault_latching(void)
     prop_report(&cleared);
     prop_report(&reset_clears);
 
-    /* Disposition/severity are total functions over the whole 17-bit fault space. */
+    /* Disposition/severity are total functions over the whole 18-bit fault
+     * space (GH#40 added CTRL_FAULT_BATT_TEMP_REQUIRED at bit 17). */
     {
         prop_inv_t disp_total;
         prop_inv_init(&disp_total, "P5 disposition/severity agree over all fault sets");
-        for (uint32_t f = 0; f < (1u << 17); f++) {
+        for (uint32_t f = 0; f < (1u << 18); f++) {
             const ctrl_disposition_t d = ctrl_fault_disposition(f);
             const ctrl_severity_t    s = ctrl_fault_severity(f);
             const int open_bits  = (f & CTRL_FAULT_OPEN_MASK) != 0;

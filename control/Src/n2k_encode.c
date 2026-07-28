@@ -313,6 +313,7 @@ const char *n2k_alert_text(uint32_t fault_bit)
     case CTRL_FAULT_THERMAL_DIVERGE:  return "Thermal model divergence";
     case CTRL_FAULT_WATCHDOG:         return "Watchdog reset - field opened";
     case CTRL_FAULT_VSUP_IMPLAUSIBLE: return "Field supply reading distrusted";
+    case CTRL_FAULT_BATT_TEMP_REQUIRED: return "Battery temp required - charge blocked";
     default:                          return "unknown fault";
     }
 }

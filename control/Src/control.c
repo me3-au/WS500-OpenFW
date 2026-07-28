@@ -165,6 +165,16 @@ ctrl_command_t ctrl_tick(ctrl_t *c,
     if (!isnan(m->batt_temp_c)) {
         if (m->batt_temp_c <= BATT_LOW_C)  faults |= CTRL_FAULT_BATT_LOWTEMP;
         if (m->batt_temp_c >= BATT_HIGH_C) faults |= CTRL_FAULT_BATT_HIGHTEMP;
+    } else if (g->require_batt_temp) {
+        /* GH#40: the low/high-temp window above arms whenever batt_temp_c is
+         * valid — untouched. This is the install-time OPT-IN for climates
+         * where charging with an unarmed window is unacceptable (installer
+         * has bench-bound batt_temp_src and still wants a hard stop if the
+         * probe later goes open/short, rather than the default "charge and
+         * annunciate"). Default false: see control.h's ctrl_batt_temp_src_t
+         * for why arming this on an unbound channel would be worse than the
+         * gap it closes. */
+        faults |= CTRL_FAULT_BATT_TEMP_REQUIRED;
     }
     faults |= m->ext_faults;                              /* BMS loss, shunt implausible, … */
     c->faults = faults;

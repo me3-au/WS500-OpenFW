@@ -111,6 +111,12 @@ static void config_defaults(void)
     g->limp_vcell        = 3.30f;   /* v_limp (PROFILE_SPEC §1) */
     g->limp_power_cap_w  = 250.0f;  /* placeholder reduced cap */
 
+    /* GH#40: battery-temp charge-window gate. MUST default to NONE/false —
+     * see control.h's ctrl_batt_temp_src_t doc comment for why shipping a
+     * guessed channel binding is worse than the gap it closes. */
+    g->batt_temp_src     = CTRL_BATT_TEMP_NONE;
+    g->require_batt_temp = false;
+
     /* Hardware limit set (CONTROL_SPEC §2.1) — placeholders, commissioned per install. */
     s_cfg.limits.battery_c_limit    = 0.5f;   /* 0.5 C default LFP */
     s_cfg.limits.wiring_limit_a     = 0.0f;   /* unset */

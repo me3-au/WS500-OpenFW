@@ -68,6 +68,7 @@ bool telem_json_line(char *chunk, int cap, cfg_json_sink_fn sink, void *ctx,
     cfg_json_w_key(&w, "watts");   cfg_json_w_f32(&w, t->watts_batt);
     cfg_json_w_key(&w, "alt_c");   cfg_json_w_f32(&w, t->alt_temp_c);
     cfg_json_w_key(&w, "batt_c");  cfg_json_w_f32(&w, t->batt_temp_c);
+    cfg_json_w_key(&w, "batt_armed"); cfg_json_w_bool(&w, t->batt_temp_armed);
     cfg_json_w_key(&w, "rpm");     cfg_json_w_f32(&w, t->rpm);
     cfg_json_w_key(&w, "rpm_st");  cfg_json_w_int(&w, (long)t->rpm_state);
 

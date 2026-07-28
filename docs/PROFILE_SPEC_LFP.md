@@ -129,6 +129,8 @@ oscillation impossible faster than `t_tail_hold_s + t_revert_hold_s`
 | `cv_hold_exit_min` | min | 15 | 0 (off), 5–120 | T2 primary voltage+time exit (§2.2). Range added 2026-07-28 (GH#34): below 5 min surface voltage alone can fake "held at CV" on a partially charged bank; above 120 min it stops being an exit (T2c territory) |
 | `skip_bulk_vcell` | V/cell | unset (0 = off) | 3.25–3.45 | T1 skip-BULK resting-voltage trigger — set to the install's solar float (typ. 3.375–3.40). Below 3.25 a *resting* bank is meaningfully discharged and must never skip BULK; above 3.45 exceeds the §1 float span (GH#34) |
 | `skip_bulk_soc_pct` | % | unset (≤0 = off) | 50–100 | T1 skip-BULK trusted-SOC trigger (§4.3 trust rules); skipping BULK below half charge is never right (GH#34) |
+| `batt_temp_src` | enum | `none` | `none` \| `adc_a` \| `adc_b` | GH#40, added 2026-07-28: which of the two harness β3950 NTC channels (§4.2, PA1/PA2) feeds the battery-temp charge-window gate instead of an alternator probe. **Default MUST stay `none`** — which physical channel is the Battery Temp Sense wire is `bench-pending` (WS500_HARDWARE_SPEC §6b); binding the wrong one lets an alternator reading arm the wrong side of the window. `none` = gate stays unarmed, matching pre-GH#40 v1 behavior exactly |
+| `require_batt_temp` | bool | `false` | `false` \| `true` | GH#40, added 2026-07-28: `false` = charge and annunciate when `batt_temp_c` is invalid (the v1 default — an unarmed window is visible on telemetry, §4.2, but does not block charging). `true` = block charging without a valid battery-temp reading (`CTRL_FAULT_BATT_TEMP_REQUIRED`, CONTROL_SPEC §9.1 code 18) — the opt-in for installs in genuinely cold climates that would rather stop than run blind |
 
 ### 3.2 Tail exit
 

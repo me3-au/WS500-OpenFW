@@ -8,26 +8,34 @@
  * never a memcpy of a struct, so the on-disk layout is independent of compiler
  * padding, struct order and target ABI.
  *
- * Record framing (all little-endian; offsets are exact and frozen for v1):
+ * Record framing (all little-endian; offsets are exact and frozen per schema
+ * version — see the schema history note below):
  *
  *   off  size  field
  *   0    4     magic 'W','5','C','F'
  *   4    2     schema_version  (= CFG_SCHEMA_VERSION)
  *   6    2     flags           (reserved, must be 0)
  *   8    4     generation      (monotone; modular comparison, see config_store.h)
- *   12   2     payload_len     (= CFG_PAYLOAD_V1_BYTES for v1)
+ *   12   2     payload_len     (= CFG_PAYLOAD_V1_BYTES for the current schema)
  *   14   2     reserved        (must be 0)
  *   16   N     payload         (blocks below)
  *   16+N 4     crc32           over bytes [0, 16+N) — no gaps
  *
- * CRC32 is the standard reflected polynomial 0xEDB88320, init 0xFFFFFFFF,
- * final XOR 0xFFFFFFFF (the zlib/PNG "CRC-32" — check value 0xCBF43926 for the
- * string "123456789"). Bitwise, no table: 310 bytes at boot is nothing, and a
- * 1 KB table on a 128 KB part is not worth it.
+ * SCHEMA HISTORY: no read-forward migration path yet (VERSIONING §3: future
+ * work), so a schema_version bump means old/new records are mutually
+ * unreadable — fine pre-M1, no custom firmware has ever written a field
+ * EEPROM (PROJECT_PLAN §5). schema 1 -> 2 (GH#40, 2026-07-28): appended
+ * `batt_temp_src` + `require_batt_temp` (1 byte each) at the payload TAIL
+ * after `active_profile` (VERSIONING §3 tail-append style, atop the bump).
+ * The `_V1_` names below predate the bump and stay as-is — plain symbol
+ * names, not a promise of two live layouts at once.
  *
- * Floats are stored as their IEEE-754 single-precision bit pattern, little-end
- * first. NAN round-trips (it is a live "disabled" value for warmup_coolant_c
- * and rotor_v_max), so the codec must not normalize it.
+ * CRC32: standard reflected polynomial 0xEDB88320, init/final XOR
+ * 0xFFFFFFFF (zlib/PNG "CRC-32" — check value 0xCBF43926 for "123456789").
+ * Bitwise, no table: ~310 bytes at boot is nothing.
+ *
+ * Floats are IEEE-754 single-precision bit patterns, little-end first. NAN
+ * round-trips (a live "disabled" value for warmup_coolant_c / rotor_v_max).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -42,7 +50,7 @@
 #define CFG_MAGIC_1            '5'
 #define CFG_MAGIC_2            'C'
 #define CFG_MAGIC_3            'F'
-#define CFG_SCHEMA_VERSION     1u
+#define CFG_SCHEMA_VERSION     2u   /* GH#40: batt_temp_src + require_batt_temp appended */
 
 /* ---- header offsets (frozen) ---------------------------------------------- */
 #define CFG_OFF_MAGIC          0u
@@ -60,16 +68,18 @@
 #define CFG_POFF_LIMITS        74u     /* ctrl_limits_t, 3 x f32     = 12 */
 #define CFG_POFF_PROFILES      86u     /* 7 x CFG_PROFILE_BYTES      = 203 */
 #define CFG_POFF_ACTIVE        289u    /* active_profile u8          =  1 */
-#define CFG_PAYLOAD_V1_BYTES   290u
+#define CFG_POFF_BATT_TEMP     290u    /* GH#40 tail: batt_temp_src u8, require_batt_temp u8 = 2 */
+#define CFG_PAYLOAD_V1_BYTES   292u
 
 #define CFG_PRIMITIVES_BYTES   20u
 #define CFG_GLOBALS_BYTES      54u
 #define CFG_LIMITS_BYTES       12u
 #define CFG_PROFILE_BYTES      29u
 #define CFG_PROFILE_COUNT      7u      /* PROFILE_SPEC §4.1: ids 1..7 */
+#define CFG_BATT_TEMP_BYTES    2u      /* GH#40: batt_temp_src u8 + require_batt_temp u8 */
 
 #define CFG_RECORD_V1_BYTES \
-    (CFG_HEADER_BYTES + CFG_PAYLOAD_V1_BYTES + CFG_CRC_BYTES)   /* 310 */
+    (CFG_HEADER_BYTES + CFG_PAYLOAD_V1_BYTES + CFG_CRC_BYTES)   /* 312 */
 
 /* ---- voltage primitives (PROFILE_SPEC §1) ---------------------------------
  * "Stored once, referenced by name from profiles" — so they are a first-class

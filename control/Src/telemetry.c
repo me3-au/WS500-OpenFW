@@ -27,6 +27,11 @@ void ctrl_build_telemetry(ctrl_telemetry_t *t,
     t->watts_batt   = m->watts_batt;
     t->alt_temp_c   = m->alt_hotspot_c;
     t->batt_temp_c  = m->batt_temp_c;
+    /* GH#40: "armed" mirrors the exact gate control.c uses (!isnan(batt_temp_c))
+     * rather than g->batt_temp_src != NONE, because a bound-but-open/shorted
+     * probe must show as unarmed too — the annunciation is about what CAN
+     * arm the window THIS tick, not merely what config claims is fitted. */
+    t->batt_temp_armed = !isnan(m->batt_temp_c);
     t->rpm          = m->rpm;
     t->rpm_state    = m->rpm_state;
 }

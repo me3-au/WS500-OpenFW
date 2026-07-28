@@ -74,6 +74,31 @@ typedef enum {
     CTRL_ISRC_NONE       = 5   /* tier 5: voltage-only */
 } ctrl_isrc_tier_t;
 
+/*
+ * Battery-temp source selector (GH#40, CONTROL_SPEC §4.2).
+ *
+ * The harness carries a dedicated Battery Temp Sense wire (WS500_HARDWARE_SPEC
+ * §6c row 9), and the board has two identical beta-3950 NTC channels (PA1/PA2,
+ * §6b) — one is the Alternator Temp Sense (harness wire 4), the other very
+ * likely lands the battery probe. But WHICH physical channel is which is
+ * `bench-pending` (§6b: "which of PA1/PA2 is ATS -> bench"; open issue #8,
+ * ADC channel binding by signal injection) — nothing in the RE record
+ * distinguishes them.
+ *
+ * DEFAULT MUST STAY `CTRL_BATT_TEMP_NONE`. Guessing wrong here is not a
+ * cosmetic mislabel: an alternator probe reading 80 C would look like a
+ * scalding battery and abort charging (CTRL_FAULT_BATT_HIGHTEMP), or a warm
+ * alternator would mask a genuinely freezing bank and let the low-temp gate
+ * (CTRL_FAULT_BATT_LOWTEMP) stay silent. The mechanism below ships complete
+ * and inert; one bench step (binding the channel) plus one config write is
+ * what arms it.
+ */
+typedef enum {
+    CTRL_BATT_TEMP_NONE  = 0,  /* no battery-temp source configured (v1 safe default) */
+    CTRL_BATT_TEMP_ADC_A = 1,  /* PA1 (SENSOR_CH_TEMP_A1) feeds batt_temp_c */
+    CTRL_BATT_TEMP_ADC_B = 2   /* PA2 (SENSOR_CH_TEMP_A2) feeds batt_temp_c */
+} ctrl_batt_temp_src_t;
+
 /* ---- Fault model (CONTROL_SPEC §7, §9) ------------------------------------ */
 typedef enum { CTRL_SEV_INFO = 0, CTRL_SEV_WARN, CTRL_SEV_FAULT, CTRL_SEV_CRITICAL } ctrl_severity_t;
 
@@ -102,7 +127,9 @@ typedef enum {
     CTRL_FAULT_IMPLAUSIBLE_SHUNT = 1u << 13,/* recoverable → LIMP */
     CTRL_FAULT_THERMAL_DIVERGE = 1u << 14,  /* governor model divergence (§4.1) */
     CTRL_FAULT_WATCHDOG        = 1u << 15,  /* → field open */
-    CTRL_FAULT_VSUP_IMPLAUSIBLE = 1u << 16  /* WARN: clamp supply reading distrusted (§5.1) */
+    CTRL_FAULT_VSUP_IMPLAUSIBLE = 1u << 16, /* WARN: clamp supply reading distrusted (§5.1) */
+    CTRL_FAULT_BATT_TEMP_REQUIRED = 1u << 17/* FAULT/BLOCK: require_batt_temp set and
+                                             * batt_temp_c invalid (GH#40, code 18) */
 } ctrl_fault_bits_t;
 
 /* ---- Live measurements the engine consumes -------------------------------- *
@@ -191,6 +218,12 @@ typedef struct {
     /* Limp Home target (§7 degraded-mode ladder) — safe-mode FLOAT. */
     float   limp_vcell;         /* v_limp, default 3.30 V/cell */
     float   limp_power_cap_w;   /* reduced power cap in limp */
+
+    /* Battery-temp charge-window gate (GH#40, CONTROL_SPEC §4.2). Appended at
+     * the struct/record tail — schema_version 2 (VERSIONING §3, config_doc.h). */
+    ctrl_batt_temp_src_t batt_temp_src;   /* which ADC channel feeds batt_temp_c; NONE default */
+    bool    require_batt_temp;  /* true = block charge without a valid batt_temp_c reading
+                                  * (cold-climate installs); false = charge and annunciate */
 } ctrl_globals_t;
 
 /* ---- Hardware limit set (CONTROL_SPEC §2.1), native units ----------------- *

@@ -38,9 +38,17 @@ void test_telemetry(void)
     CHECK_FEQ(t.watts_batt, 3240.0f, 0.01f);
     CHECK(t.rpm_state == CTRL_RPM_VALID);
     CHECK_FEQ(t.field_effort, 0.42f, 0.001f);
+    CHECK(t.batt_temp_armed == true);              /* GH#40: batt_temp_c valid above */
 
     /* Zero cells → NaN per-cell, no divide-by-zero. */
     g.cells_series = 0;
     ctrl_build_telemetry(&t, &m, &cmd, &g, &p);
     CHECK(isnan(t.v_cell));
+
+    /* GH#40: unarmed mirrors control.c's own gate exactly — NaN batt_temp_c
+     * (batt_temp_src == none, or a bound channel that is currently open/short)
+     * must annunciate as unarmed regardless of anything else in `m`. */
+    m.batt_temp_c = NAN;
+    ctrl_build_telemetry(&t, &m, &cmd, &g, &p);
+    CHECK(t.batt_temp_armed == false);
 }

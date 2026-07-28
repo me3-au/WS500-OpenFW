@@ -54,6 +54,7 @@ static ctrl_telemetry_t sample_telemetry(void)
     t.watts_batt        = 531.0f;
     t.alt_temp_c        = 71.5f;
     t.batt_temp_c       = NAN;              /* sensor not fitted → null */
+    t.batt_temp_armed   = false;            /* GH#40: mirrors batt_temp_c above */
     t.rpm               = NAN;              /* signal lost → null */
     t.rpm_state         = CTRL_RPM_LOST;
     return t;
@@ -125,6 +126,7 @@ void test_telemetry_json(void)
     CHECK(has("\"watts\":531"));
     CHECK(has("\"alt_c\":71.5"));
     CHECK(has("\"batt_c\":null"));          /* NAN → null, config-wire rule */
+    CHECK(has("\"batt_armed\":false"));     /* GH#40: unarmed, annunciated explicitly */
     CHECK(has("\"rpm\":null"));
     CHECK(has("\"rpm_st\":2"));
 
@@ -158,6 +160,18 @@ void test_telemetry_json(void)
             CHECK(emit(128, &t, &dc));
             CHECK(has(CRC[i].want));
         }
+    }
+
+    /* GH#40: batt_armed follows the telemetry struct field independently of
+     * batt_c's own null-ness (the emitter must not derive one from the other
+     * — telemetry.c already computed the mirror; the wire just carries it). */
+    {
+        ctrl_telemetry_t ta = t;
+        ta.batt_temp_c     = 24.0f;
+        ta.batt_temp_armed = true;
+        CHECK(emit(128, &ta, &d));
+        CHECK(has("\"batt_c\":24"));
+        CHECK(has("\"batt_armed\":true"));
     }
 
     /* Chunk-size invariance: the streamed shape loses nothing. */

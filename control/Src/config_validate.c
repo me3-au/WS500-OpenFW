@@ -91,6 +91,16 @@ static cfg_err_t validate_globals(const ctrl_globals_t *g, const cfg_primitives_
         return CFG_ERR_SANITY_ROTOR_VMAX;
     if (!nonneg_finite(g->limp_power_cap_w)) return CFG_ERR_SANITY_LIMP_POWER_CAP;
 
+    /* GH#40: batt_temp_src is a closed enum, not a free integer — an
+     * out-of-set value (corrupt record, or a client that sends something
+     * other than "none"/"adc_a"/"adc_b") must be rejected by name rather
+     * than silently landing on NONE, which would look identical to an
+     * intentional "not configured" and hide the corruption. */
+    if (!(g->batt_temp_src == CTRL_BATT_TEMP_NONE ||
+         g->batt_temp_src == CTRL_BATT_TEMP_ADC_A ||
+         g->batt_temp_src == CTRL_BATT_TEMP_ADC_B))
+        return CFG_ERR_RANGE_BATT_TEMP_SRC;
+
     /* [SPEC-GAP] no §3 range for skip_bulk_vcell — 0 = off, so sanity only. */
     if (!nonneg_finite(g->skip_bulk_vcell)) return CFG_ERR_SANITY_SKIP_BULK_VCELL;
     /* <= 0 = off (control.h), so only the upper end is constrained. */
@@ -231,6 +241,7 @@ const char *cfg_err_str(cfg_err_t e)
     case CFG_ERR_SANITY_ROTOR_RATED:    return "rotor_rated_v must be finite and positive";
     case CFG_ERR_SANITY_ROTOR_VMAX:     return "rotor_v_max must be finite and positive, or NaN";
     case CFG_ERR_SANITY_LIMP_POWER_CAP: return "limp_power_cap_w must be finite and non-negative";
+    case CFG_ERR_RANGE_BATT_TEMP_SRC:   return "batt_temp_src must be none, adc_a, or adc_b";
     case CFG_ERR_SANITY_BATTERY_C:      return "battery_c_limit must be finite and non-negative";
     case CFG_ERR_SANITY_WIRING_A:       return "wiring_limit_a must be finite and non-negative";
     case CFG_ERR_SANITY_ALT_A:          return "alternator_limit_a must be finite and non-negative";
@@ -289,6 +300,7 @@ const char *cfg_err_name(cfg_err_t e)
     CFG_ERR_NAME_CASE(CFG_ERR_SANITY_ROTOR_RATED);
     CFG_ERR_NAME_CASE(CFG_ERR_SANITY_ROTOR_VMAX);
     CFG_ERR_NAME_CASE(CFG_ERR_SANITY_LIMP_POWER_CAP);
+    CFG_ERR_NAME_CASE(CFG_ERR_RANGE_BATT_TEMP_SRC);
     CFG_ERR_NAME_CASE(CFG_ERR_SANITY_BATTERY_C);
     CFG_ERR_NAME_CASE(CFG_ERR_SANITY_WIRING_A);
     CFG_ERR_NAME_CASE(CFG_ERR_SANITY_ALT_A);

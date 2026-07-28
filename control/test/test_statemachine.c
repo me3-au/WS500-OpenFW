@@ -365,4 +365,48 @@ void test_statemachine(void)
         for (int i = 0; i < 100; i++) cmd = ctrl_tick(&e, &m, &c, &p16, &g16, 10);
         CHECK(!(cmd.faults & CTRL_FAULT_VSUP_IMPLAUSIBLE));
     }
+
+    /* 19) GH#40 default policy: batt_temp_src unset (batt_temp_c NaN, matching
+     *     what sensors.c reports when the config is `none`) + require_batt_temp
+     *     false (the shipped default) → the low/high-temp window simply stays
+     *     unarmed (no CTRL_FAULT_BATT_LOWTEMP/HIGHTEMP — both need a valid
+     *     reading to even evaluate) and charging proceeds UNBLOCKED. This is
+     *     the "charge and annunciate" behavior CONTROL_SPEC §4.2 requires:
+     *     the gap must be visible (telemetry batt_armed=false, test_telemetry.c)
+     *     but must never itself stop a healthy charge. */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_measured_t m = M(3.30f);
+        m.batt_temp_c = NAN;                    /* batt_temp_src == none */
+        ctrl_command_t cmd = {0};
+        for (int i = 0; i < 5; i++) cmd = ctrl_tick(&e, &m, &c, &p, &g, 100);
+        CHECK(cmd.state == CTRL_BULK);
+        CHECK(!cmd.field_open);
+        CHECK(!(cmd.faults & (CTRL_FAULT_BATT_LOWTEMP | CTRL_FAULT_BATT_HIGHTEMP |
+                              CTRL_FAULT_BATT_TEMP_REQUIRED)));
+    }
+
+    /* 20) GH#40 opt-in: require_batt_temp true + batt_temp_c NaN → charging is
+     *     BLOCKed (CTRL_FAULT_BATT_TEMP_REQUIRED), same field-off shape as the
+     *     existing BATT_LOWTEMP block (case 4 above) — auto-resume BLOCK, not
+     *     a latch (§9.1). Once a valid reading arrives the fault clears and
+     *     the same tick's engine can proceed exactly as case 2. */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_globals_t greq = g; greq.require_batt_temp = true;
+        ctrl_measured_t m = M(3.30f);
+        m.batt_temp_c = NAN;
+        ctrl_command_t cmd = ctrl_tick(&e, &m, &c, &p, &greq, 100);
+        CHECK(cmd.faults & CTRL_FAULT_BATT_TEMP_REQUIRED);
+        CHECK(cmd.state == CTRL_STANDBY);
+        CHECK(cmd.field_open);
+
+        /* Auto-resume: a valid reading arriving later clears the block and
+         * lets BULK proceed, without needing ctrl_init(). */
+        ctrl_measured_t ok = m; ok.batt_temp_c = 25.0f;
+        for (int i = 0; i < 5; i++) cmd = ctrl_tick(&e, &ok, &c, &p, &greq, 100);
+        CHECK(!(cmd.faults & CTRL_FAULT_BATT_TEMP_REQUIRED));
+        CHECK(cmd.state == CTRL_BULK);
+        CHECK(!cmd.field_open);
+    }
 }

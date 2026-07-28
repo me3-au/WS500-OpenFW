@@ -31,6 +31,13 @@ typedef struct {
     float                 watts_batt;
     float                 alt_temp_c;
     float                 batt_temp_c;
+    bool                  batt_temp_armed;  /* GH#40: charge-window gate CAN arm this
+                                             * tick — true iff batt_temp_c is valid.
+                                             * CONTROL_SPEC §4.2: "must never report a
+                                             * window as satisfied" when it cannot arm;
+                                             * `batt_c:null` alone does not say that,
+                                             * because null is also what a transient
+                                             * sensor glitch looks like. */
     float                 rpm;
     ctrl_rpm_state_t      rpm_state;
 } ctrl_telemetry_t;

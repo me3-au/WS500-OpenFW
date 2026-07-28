@@ -249,7 +249,10 @@ static void cmd_gpio(int argc, char *argv[])
 static void cmd_adc(void)
 {
     sensor_readings_t r;
-    sensors_read(&r);
+    /* CTRL_BATT_TEMP_NONE: this command's whole purpose is the GH#40 §6b
+     * bench step ("which of PA1/PA2 is ATS vs BTS") — it must show BOTH raw
+     * channels as alt_temp_c/alt_temp2_c, never pre-split by a config guess. */
+    sensors_read(&r, CTRL_BATT_TEMP_NONE);
 
     LINE({
         lb_str(&_lb, "ADC (12-bit, x4 sw-averaged, Sec0.6 V4)  Vdda=");

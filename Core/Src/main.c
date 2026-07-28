@@ -172,9 +172,12 @@ int main(void)
             sensors_update();
             stator_rpm_update();
             dio_poll();
-            sensor_readings_t r;
-            sensors_read(&r);
+            /* config_get() BEFORE sensors_read(): GH#40's batt_temp_src config
+             * selector has to be known before the ADC channels are split into
+             * alt-probe vs battery-probe readings for this tick. */
             config_get(&g, &prof);
+            sensor_readings_t r;
+            sensors_read(&r, g.batt_temp_src);
             watchdog_checkpoint(WDG_CP_SENSORS);
 
             /* RPM: stator_rpm_rpm() is NAN whenever poles/pulley_ratio aren't

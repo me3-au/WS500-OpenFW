@@ -129,6 +129,8 @@ static bool cfg_same(const ctrl_config_t *a, const ctrl_config_t *b)
     if (x->allow_full_field_48v != y->allow_full_field_48v) return false;
     if (!fbits(x->limp_vcell, y->limp_vcell)) return false;
     if (!fbits(x->limp_power_cap_w, y->limp_power_cap_w)) return false;
+    if (x->batt_temp_src != y->batt_temp_src) return false;
+    if (x->require_batt_temp != y->require_batt_temp) return false;
 
     if (!fbits(a->limits.battery_c_limit, b->limits.battery_c_limit)) return false;
     if (!fbits(a->limits.wiring_limit_a, b->limits.wiring_limit_a)) return false;
@@ -352,7 +354,7 @@ static void test_hello(void)
     CHECK(has(r, "\"t\":\"hello\""));
     CHECK(has(r, "\"fw\":\"0.1.0-dev\""));
     CHECK(has(r, "\"proto\":1"));
-    CHECK(has(r, "\"schema\":1"));
+    CHECK(has(r, "\"schema\":2"));   /* GH#40 bumped CFG_SCHEMA_VERSION 1 -> 2 */
     /* A host WITHOUT the telem hook (this fixture) advertises only "cfg" —
      * the flag follows the hook, never the build (see test_telem_surface). */
     CHECK(has(r, "\"caps\":[\"cfg\"]"));
@@ -367,7 +369,7 @@ static void test_hello(void)
 
     /* proto is optional, and key order is not significant. */
     CHECK(has(send("{\"t\":\"hello\"}"), "\"proto\":1"));
-    CHECK(has(send("{\"proto\":1,\"t\":\"hello\"}"), "\"schema\":1"));
+    CHECK(has(send("{\"proto\":1,\"t\":\"hello\"}"), "\"schema\":2"));
 
     proto_reset("deadbee");
     CHECK(has(send("{\"t\":\"hello\",\"proto\":1}"), "\"git\":\"deadbee\""));
@@ -452,7 +454,7 @@ static void test_round_trip(void)
 
     const char *get = send("{\"t\":\"cfg-get\"}");
     CHECK(has(get, "\"t\":\"cfg\""));
-    CHECK(has(get, "\"schema_version\":1"));
+    CHECK(has(get, "\"schema_version\":2"));   /* GH#40 bumped CFG_SCHEMA_VERSION 1 -> 2 */
     CHECK(has(get, "\"fw\":\"0.1.0-dev\""));
     CHECK(has(get, "\"cv_target\":\"v_bulk\""));           /* §3.3 primitive ref */
     CHECK(has(get, "\"name\":\"Bulk, Float Norm\""));      /* §4.1 name table */
@@ -460,6 +462,9 @@ static void test_round_trip(void)
     CHECK(has(get, "\"warmup_coolant_c\":null"));
     CHECK(has(get, "\"soc_target_pct\":null"));            /* -1 -> null */
     CHECK(has(get, "\"reserved\":true"));                  /* profile 7 */
+    /* GH#40 shipped defaults, spelled out on the wire (not just "null"). */
+    CHECK(has(get, "\"batt_temp_src\":\"none\""));
+    CHECK(has(get, "\"require_batt_temp\":false"));
 
     const int n = reply_to_cfg_set(get, g_doc, (int)sizeof g_doc);
     CHECK(n > 0);
@@ -480,6 +485,8 @@ static void test_round_trip(void)
     g_live.profiles[3].p.rest_power_cap_w = 1.0f;
     g_live.profiles[6].flags       = 0u;
     g_live.active_profile          = 5;
+    g_live.globals.batt_temp_src   = CTRL_BATT_TEMP_ADC_B;   /* GH#40 */
+    g_live.globals.require_batt_temp = true;
 
     const char *ok = send(g_doc);
     if (!has(ok, "\"t\":\"ok\"")) printf("  cfg-set reply: %s", ok);
@@ -497,6 +504,19 @@ static void test_round_trip(void)
     CHECK(has(send("{\"t\":\"cfg-set\",\"cfg\":{\"global\":{\"max_charge_power_w\":12345}}}"),
               "\"t\":\"ok\""));
     CHECK(fbits(g_live.globals.max_charge_power_w, 12345.0f));
+
+    /* GH#40: both non-default enum spellings, and the bool, survive cfg-set
+     * and come back correctly spelled from cfg-get. */
+    proto_reset("");
+    CHECK(has(send("{\"t\":\"cfg-set\",\"cfg\":{\"global\":{"
+                   "\"batt_temp_src\":\"adc_a\",\"require_batt_temp\":true}}}"),
+              "\"t\":\"ok\""));
+    CHECK(g_live.globals.batt_temp_src == CTRL_BATT_TEMP_ADC_A);
+    CHECK(g_live.globals.require_batt_temp == true);
+    CHECK(has(send("{\"t\":\"cfg-get\"}"), "\"batt_temp_src\":\"adc_a\""));
+    CHECK(has(send("{\"t\":\"cfg-set\",\"cfg\":{\"global\":{\"batt_temp_src\":\"adc_b\"}}}"),
+              "\"t\":\"ok\""));
+    CHECK(g_live.globals.batt_temp_src == CTRL_BATT_TEMP_ADC_B);
 
     /* Overlay semantics: a one-key document changes one key. */
     proto_reset("");
@@ -542,7 +562,7 @@ static void test_unknown_keys(void)
     /* `name` and `fw` are KNOWN keys the firmware simply does not store — they
      * must not inflate the count, or every round trip would look lossy. */
     proto_reset("");
-    CHECK(has(send("{\"t\":\"cfg-set\",\"cfg\":{\"schema_version\":1,\"fw\":\"x\","
+    CHECK(has(send("{\"t\":\"cfg-set\",\"cfg\":{\"schema_version\":2,\"fw\":\"x\","
                    "\"profiles\":[{\"id\":1,\"name\":\"Anything\"}]}}"),
               "\"unknown_keys\":0"));
 
@@ -610,6 +630,9 @@ static void test_validator_surface(void)
     expect_code("{\"global\":{\"limp_power_cap_w\":-1}}",     CFG_ERR_SANITY_LIMP_POWER_CAP);
     expect_code("{\"global\":{\"skip_bulk_vcell\":-1}}",      CFG_ERR_SANITY_SKIP_BULK_VCELL);
     expect_code("{\"global\":{\"skip_bulk_soc_pct\":120}}",   CFG_ERR_RANGE_SKIP_BULK_SOC);
+    /* GH#40: an unrecognised batt_temp_src spelling is stored out-of-enum by
+     * config_doc.c and rejected here BY NAME, same pattern as rest.mode. */
+    expect_code("{\"global\":{\"batt_temp_src\":\"pa1\"}}",   CFG_ERR_RANGE_BATT_TEMP_SRC);
 
     /* §2.1 limit set. */
     expect_code("{\"limits\":{\"battery_c_limit\":-1}}",      CFG_ERR_SANITY_BATTERY_C);
@@ -676,8 +699,13 @@ static void test_message_errors(void)
     CHECK(has(send("{\"t\":\"cfg-set\"}"), "\"code\":\"CFG_ERR_MSG\""));
     CHECK(has(send("{\"t\":\"cfg-set\",\"cfg\":7}"), "\"code\":\"CFG_ERR_MSG\""));
 
-    /* Wrong schema version is a refusal, not a migration (VERSIONING §3). */
-    CHECK(has(send("{\"t\":\"cfg-set\",\"cfg\":{\"schema_version\":2}}"),
+    /* Wrong schema version is a refusal, not a migration (VERSIONING §3).
+     * 1 is deliberate, not arbitrary: it is the OLD native version (pre-GH#40)
+     * — proving the firmware refuses its own predecessor, not just anything
+     * that isn't 2, is the point of this case. */
+    CHECK(has(send("{\"t\":\"cfg-set\",\"cfg\":{\"schema_version\":1}}"),
+              "\"code\":\"CFG_ERR_SCHEMA\""));
+    CHECK(has(send("{\"t\":\"cfg-set\",\"cfg\":{\"schema_version\":99}}"),
               "\"code\":\"CFG_ERR_SCHEMA\""));
 
     /* Type errors name the key that could not be used. */

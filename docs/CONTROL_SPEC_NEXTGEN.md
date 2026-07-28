@@ -78,7 +78,7 @@ where they appear:
 | --- | --- |
 | Rotor/field current metering | §5.1 runs in duty-clamp + driver-temp mode; no rotor R learning / temp observer |
 | Hardware field-cutoff (TIM1 BKIN) | Refuted by §0.6 V1+V2 — cutoff is the software §7 R0 funnel; see the callout above |
-| Local battery-temperature sensor | The third NTC channel is the **driver-stage** sensor (§0.6 V8), not a BTS. Battery temp is a **v2** CAN/BMS input (PROJECT_PLAN §1.1), so the §4.2 charge-window gate has no v1 source — see §4.2 |
+| Local battery-temperature sensor (channel binding) | **Not excluded — corrected 2026-07-28, GH#40.** The harness Battery Temp Sense wire is real (§6c row 9) and lands on one of the two β3950 channels (PA1/PA2, §6b); only *which* channel is `bench-pending`. §4.2's `batt_temp_src` config ships inert (default `none`) until the bench step + a config write bind it — see §4.2 |
 | Second local shunt channel | Single-shunt placement rules (§6.2) |
 | Dedicated crank-pulse RPM input | RPM sources = CAN + stator only (§3.1); with CAN-IN deferred to v2, **stator is the sole v1 source** |
 | EGT input | EGT ceiling only if EGT arrives on CAN (⇒ v2) |
@@ -542,19 +542,54 @@ before any limit is hit.
   on max() of estimates, divergence plausibility warning⟧
 - Battery temp is only a charge-window gate (low-temp Li cutoff = hard fault,
   high-temp = charge abort). No comp curves.
-  - **v1 has no battery-temperature source at all.** §0.6 V8 established that
-    the third NTC channel is the driver-stage sensor, not a battery sensor, and
-    PROJECT_PLAN §1.1 defers all CAN/BMS input to v2 — so the only two paths to
-    a battery temperature are both absent in v1. Consequences, which the
-    firmware must make **visible rather than silent**: the low/high-temp
-    charge-window gate cannot arm, and battery-temperature compensation is a
-    **v2 feature** (it was never in this Li-first model anyway — §0 and
-    Appendix A delete comp curves outright). A v1 build reports the battery-temp
-    input as *unavailable*; it must never report a window as *satisfied*.
-    Alternator and driver-stage thermal protection are unaffected — those run
-    on local sensors and are fully live in v1. `bench-pending`: if a harness
-    battery-temp input is ever positively identified (§0.6 lists no candidate),
-    this reverts to a v1 feature.
+  - **v1's battery-temperature source exists but is bench-pending, and ships
+    inert by default (GH#40, corrects the "no v1 source at all" text this
+    replaces).** §0.6 V8 only refuted PA3 as the battery sensor — it did not
+    refute the harness. WS500_HARDWARE_SPEC §6c row 9 (Battery Temp Sense) is a
+    real wire, and the board carries two identical β3950 NTC channels (PA1,
+    PA2, §6b); one is the Alternator Temp Sense (harness wire 4) and the other
+    very likely lands the battery probe. But **which physical channel is
+    which is `bench-pending`** (§6b: "which of PA1/PA2 is ATS → bench"; open
+    issue #8, ADC channel binding by signal injection) — nothing in the RE
+    record distinguishes them, and guessing wrong is not cosmetic: an
+    alternator probe reading 80 °C would look like a scalding battery and
+    abort charging, or a warm alternator would mask a genuinely freezing bank.
+    So the mechanism (`batt_temp_src` config, PROFILE_SPEC §3.1) ships
+    complete and **defaults to `none`** — inert until a bench step identifies
+    the channel and a config write binds it. Once bound, the low/high-temp
+    charge-window gate arms automatically off `batt_temp_c` — no separate
+    "enable" step beyond the channel binding itself.
+  - **No-sensor policy is a configurable flag, default "charge and
+    annunciate."** `require_batt_temp` (bool, default `false`, PROFILE_SPEC
+    §3.1): false is the v1 default and matches history — the window simply
+    stays unarmed and the firmware **must make that visible rather than
+    silent** (`batt_armed` on the telemetry line, `control/Inc/telemetry_json.h`;
+    `batt_c: null` alone is not annunciation, because null also describes a
+    transient sensor glitch). true is the opt-in for cold-climate installs
+    that would rather block charging than run with an unarmed low-temp gate —
+    it raises `CTRL_FAULT_BATT_TEMP_REQUIRED` (§9.1 code 18) and BLOCKs
+    charging (auto-resume) exactly like `BATT_LOWTEMP`/`BATT_HIGHTEMP` when
+    `batt_temp_c` is invalid. A v1 build with the shipped defaults
+    (`batt_temp_src: none`, `require_batt_temp: false`) behaves identically to
+    the pre-GH#40 firmware: it reports the battery-temp input as *unavailable*
+    and never reports a window as *satisfied*.
+  - ⚠ **Alternator thermal protection is NOT unaffected by the choice of
+    channel** (safety review, 2026-07-28 — an earlier draft of this section
+    claimed it was, and that claim was wrong). The app feeds both the
+    `alt_hotspot_c` fault input and the §4.1 thermal governor from
+    **channel A only** (`main.c`); `alt_temp2_c` is currently consumed
+    nowhere. So binding **`adc_b`** is safe — channel A stays the alternator
+    probe — but binding **`adc_a`** moves the alternator probe to the unread
+    channel, which silently means `CTRL_FAULT_SELF_OVERTEMP` can never fire
+    from the alternator NTC and the governor returns `CTRL_CEILING_INACTIVE`
+    forever. No NaN reaches a duty command; the loss is silent, which is what
+    makes it dangerous. Only the PA3 driver-stage NTC would remain — a
+    different device on a different thermal path, and itself only WARN-class
+    (§5.1 `[SPEC-GAP]`, GH#39).
+    **`adc_a` must not be configured on the live unit until the app derives
+    `alt_hotspot_c` from the max of the finite alternator-side channels.**
+    That fix also closes the pre-existing gap that `alt_temp2_c` is read and
+    then discarded. Tracked as a hard precondition on the bench binding step.
 
 ---
 
@@ -568,7 +603,7 @@ before any limit is hit.
 | VBat Kelvin sense pair | PC5 divider; mandatory-grade accuracy for Li CV |
 | Shunt ±50 mV (one, battery- **or** alternator-side) | Digitized by the I²C **INA226** (§0.6 V3 — one part, no auto-detect) → V, A; **W computed in software** (CALIBRATION left at POR, on-chip CURRENT/POWER unused). Placement declared in config (§6.2) |
 | Alt temp ×2 max (external β3950 NTC, PA1/PA2) | Open/short detect; REQUIRED/OPTIONAL/IGNORE policy with declared fallback; mount location (`laminations` / `case_front` / `case_rear`, §4). Which channel is the alternator probe vs. a second external probe is `bench-pending` (identical β in firmware — §0.6) |
-| ~~Battery temp~~ | **Not an input on this board** — §0.6 V8 reassigned the third NTC to the driver stage. v2 CAN/BMS only (§4.2) |
+| Battery temp (external β3950 NTC, `batt_temp_src` = PA1 or PA2) | **Corrected 2026-07-28, GH#40** — WS500_HARDWARE_SPEC §6c row 9 ("Battery Temp Sense") is a real harness wire; §0.6 V8 only refuted PA3, not the harness. Shares the alt-temp channel pair (Alt temp ×2 max row above): `batt_temp_src` names which of PA1/PA2 feeds `batt_temp_c` instead of an alternator probe. Default `none` (inert) — channel identity is `bench-pending` (§6b). See §4.2 |
 | Driver-stage temp (internal NTC, PA3 β3380) | Regulator/field-switch guard; rotor proxy on v1 (§5.1) |
 | Stator/W input | RPM source 2 — **PA10 EXTI edge + TIM2 timebase** (§0.1); sole v1 RPM source |
 | Ignition/enable | Wake |
@@ -1085,15 +1120,16 @@ discrepancy is listed in §9.3 instead of being silently harmonized.
 | 6 | 5 | `OVERSPEED` | CRITICAL | OPEN | until reset | none — no overspeed threshold parameter exists (D3) | Alternator overspeed - field opened | 6S |
 | 7 | 6 | `SHUNT_OPEN` | INFO ⚠(D1) | none ⚠(D1) | no | none (D3) | Current shunt open circuit | 7S |
 | 8 | 7 | `SHUNT_REVERSED` | INFO ⚠(D1) | none ⚠(D1) | no | none (D3) | Current shunt reversed | 8S |
-| 9 | 8 | `BATT_DTDT` | CRITICAL | OPEN | until reset | none — no battery-temp source in v1 (GH#40; D3) | Battery heating too fast - charge aborted | 9S |
-| 10 | 9 | `BATT_LOWTEMP` | FAULT | BLOCK charge (auto-resume) | no | `control.c` ≤ 0 °C — unarmable in v1 (GH#40) | Battery too cold to charge | 1L |
-| 11 | 10 | `BATT_HIGHTEMP` | FAULT | BLOCK charge (auto-resume) | no | `control.c` ≥ 55 °C — unarmable in v1 (GH#40) | Battery too hot - charge aborted | 1L+1S |
+| 9 | 8 | `BATT_DTDT` | CRITICAL | OPEN | until reset | none — no rate-of-change (dT/dt) detector implemented (D3); a `batt_temp_c` source may now be configured (GH#40) but this bit does not compute a derivative from it | Battery heating too fast - charge aborted | 9S |
+| 10 | 9 | `BATT_LOWTEMP` | FAULT | BLOCK charge (auto-resume) | no | `control.c` ≤ 0 °C — arms once `batt_temp_src` names a channel (GH#40, default `none` = unarmed) | Battery too cold to charge | 1L |
+| 11 | 10 | `BATT_HIGHTEMP` | FAULT | BLOCK charge (auto-resume) | no | `control.c` ≥ 55 °C — arms once `batt_temp_src` names a channel (GH#40, default `none` = unarmed) | Battery too hot - charge aborted | 1L+1S |
 | 12 | 11 | `LOST_VBAT_SENSE` | FAULT | LIMP (auto-recover) | no | VBat reading NaN (`control.c`) | Lost battery voltage sense - limp home | 1L+2S |
 | 13 | 12 | `LOST_BMS` | FAULT | LIMP (auto-recover) | no | none in v1 — CAN-IN deferred (PROJECT_PLAN §1.1) | Lost BMS communication - limp home | 1L+3S |
 | 14 | 13 | `IMPLAUSIBLE_SHUNT` | FAULT | LIMP (auto-recover) | no | INA226 §7 R6 error budget spent (`main.c`); the §7 claimed-I-vs-static-V plausibility check itself is unimplemented (D3) | Implausible shunt reading - limp home | 1L+4S |
 | 15 | 14 | `THERMAL_DIVERGE` | WARN | none | no | none — §4.1 divergence check unimplemented (D3) | Thermal model divergence | 1L+5S |
 | 16 | 15 | `WATCHDOG` | CRITICAL | OPEN | until reset | ≥3 consecutive watchdog/fault boots (§7 R1, `main.c`) | Watchdog reset - field opened | 1L+6S |
 | 17 | 16 | `VSUP_IMPLAUSIBLE` | WARN | none (clamp already holds tight) | clears on re-trust | `ctrl_vsup_guard()` distrust active (§5.1.1) | Field supply reading distrusted | 1L+7S |
+| 18 | 17 | `BATT_TEMP_REQUIRED` | FAULT | BLOCK charge (auto-resume) | no | `control.c` — `require_batt_temp` set and `batt_temp_c` NaN (GH#40) | Battery temp required - charge blocked | 1L+8S |
 
 Latching rule (implemented, `control.c`): **OPEN-class codes latch until MCU
 reset** (power cycle / watchdog reboot; a deliberate fault-clear command does
@@ -1150,7 +1186,7 @@ gate.
   `FIELD_OVERCUR` said "BKIN territory" — a hardware backstop §0.6 V1+V2
   refuted.
 - **D6 — a battery-temp BLOCK is invisible in the state annotation.** While
-  blocked (codes 10/11) the engine sits in STANDBY with reason `off`, not a
+  blocked (codes 10/11/18) the engine sits in STANDBY with reason `off`, not a
   dedicated reason — the fault bit is the only tell. Violates the "annotated
   with a reason" intent (PROFILE_SPEC §2.1); wants a `blocked` standby reason.
   Cosmetic, but this spec's visibility rule says no silent states.
