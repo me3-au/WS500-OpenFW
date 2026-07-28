@@ -3,23 +3,137 @@
  * SPDX-License-Identifier: MIT
  */
 #include "board.h"
+#include "can_n2k.h"   /* can_n2k_set_n2k_enabled()/set_rvc_enabled(): see the
+                        * HSE-fallback CAN-suppression comment below. */
+
+static bool s_hse_ok;   /* latched at boot; board_clock_running_on_hse() */
+
+/* Bring SYSCLK up on HSE + PLLx6 (48 MHz, matches stock). Returns true iff
+ * HAL reports both the crystal and the PLL locked AND the switch completed.
+ * HAL_RCC_OscConfig()'s HSE wait is bounded by HSE_STARTUP_TIMEOUT (100 ms,
+ * Core/Inc/stm32f0xx_hal_conf.h) and its PLL-lock wait by PLL_TIMEOUT_VALUE
+ * (2 ms) -- both HAL-internal, both return HAL_TIMEOUT rather than spinning
+ * forever, so this function itself never blocks unboundedly (GH#38
+ * requirement 1). If HSE times out, HAL_RCC_OscConfig() returns immediately
+ * without touching the PLL bits at all (stm32f0xx_hal_rcc.c: the HSE wait
+ * loop's timeout path is an early `return HAL_TIMEOUT`, before the PLL
+ * section runs), so a failed attempt here leaves no partial clock state for
+ * the caller to unwind. */
+static bool board_clock_try_hse(void)
+{
+    RCC_OscInitTypeDef osc = {0};
+    osc.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+    osc.HSEState       = RCC_HSE_ON;
+    osc.PLL.PLLState    = RCC_PLL_ON;
+    osc.PLL.PLLSource   = RCC_PLLSOURCE_HSE;
+    osc.PLL.PREDIV      = RCC_PREDIV_DIV1;   /* PLL entry = HSE/1 = 8 MHz */
+    osc.PLL.PLLMUL      = RCC_PLL_MUL6;      /* 8 MHz x6 = 48 MHz, matches
+                                              * stock (§0.6 V2/V6) */
+    if (HAL_RCC_OscConfig(&osc) != HAL_OK) return false;
+
+    RCC_ClkInitTypeDef clk = {0};
+    clk.ClockType      = RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_HCLK |
+                          RCC_CLOCKTYPE_PCLK1;
+    clk.SYSCLKSource    = RCC_SYSCLKSOURCE_PLLCLK;
+    clk.AHBCLKDivider   = RCC_SYSCLK_DIV1;
+    clk.APB1CLKDivider  = RCC_HCLK_DIV2;     /* Keep APB/2 -- matches stock
+                                              * (§0.6 V6). TIM1's clock-
+                                              * doubling rule (APB prescaler
+                                              * != 1 -> TIMxCLK = 2*PCLK1)
+                                              * still lands TIM1CLK at
+                                              * 48 MHz, same as APB/1 would,
+                                              * so field_drive.c's PSC=326/
+                                              * ARR=1024 -> 143.2 Hz (§0.6 V2)
+                                              * stays exact either way -- this
+                                              * choice is about matching
+                                              * stock bit-for-bit, not about
+                                              * the PWM math, which cannot
+                                              * drift from it. */
+    return HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_1) == HAL_OK;
+}
+
+/* Fallback SYSCLK source: HSI48, exactly the pre-GH#38 configuration. Reached
+ * only when board_clock_try_hse() above timed out -- i.e. the crystal did not
+ * start. HSI48 free-runs up to +/-3% without CRS trim (no USB host attached
+ * is the normal case), which is out of spec for CAN but entirely fine for
+ * field PWM and the charge-stage timers (GH#38: this is a CAN-correctness
+ * concern, not a safety one), so the regulator keeps charging rather than
+ * hanging or faulting to safe state over a dead crystal. */
+static void board_clock_fallback_hsi48(void)
+{
+    RCC_OscInitTypeDef osc = {0};
+    osc.OscillatorType = RCC_OSCILLATORTYPE_HSI48;
+    osc.HSI48State      = RCC_HSI48_ON;
+    osc.PLL.PLLState    = RCC_PLL_NONE;
+    (void)HAL_RCC_OscConfig(&osc);   /* bounded (HSI48_TIMEOUT_VALUE); return
+                                     * ignored same as pre-GH#38 -- if even
+                                     * HSI48 will not start, SYSCLK simply
+                                     * stays on the reset-default HSI and the
+                                     * rest of board_init() carries on
+                                     * regardless (no path in this file
+                                     * blocks on a clock ever coming up). */
+
+    RCC_ClkInitTypeDef clk = {0};
+    clk.ClockType      = RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_HCLK |
+                          RCC_CLOCKTYPE_PCLK1;
+    clk.SYSCLKSource    = RCC_SYSCLKSOURCE_HSI48;
+    clk.AHBCLKDivider   = RCC_SYSCLK_DIV1;
+    clk.APB1CLKDivider  = RCC_HCLK_DIV1;     /* pre-GH#38 value; TIM1CLK still
+                                              * lands at 48 MHz here too (no
+                                              * doubling needed since the
+                                              * prescaler is already 1), so
+                                              * PSC=326/ARR=1024 is unaffected
+                                              * by which fallback divider is
+                                              * used -- kept as-is to change
+                                              * nothing else about a path that
+                                              * already ran this way. */
+    (void)HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_1);
+}
 
 void board_clock_config(void)
 {
-    /* Crystal-less: HSI48 as SYSCLK, CRS trims it against USB SOF. 48 MHz. */
-    RCC_OscInitTypeDef osc = {0};
-    osc.OscillatorType = RCC_OSCILLATORTYPE_HSI48;
-    osc.HSI48State = RCC_HSI48_ON;
-    osc.PLL.PLLState = RCC_PLL_NONE;
-    HAL_RCC_OscConfig(&osc);
+    s_hse_ok = board_clock_try_hse();
+    if (!s_hse_ok) {
+        board_clock_fallback_hsi48();
 
-    RCC_ClkInitTypeDef clk = {0};
-    clk.ClockType = RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_HCLK |
-                    RCC_CLOCKTYPE_PCLK1;
-    clk.SYSCLKSource = RCC_SYSCLKSOURCE_HSI48;
-    clk.AHBCLKDivider = RCC_SYSCLK_DIV1;
-    clk.APB1CLKDivider = RCC_HCLK_DIV1;
-    HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_1);
+        /* GH#38 requirement 3: a node transmitting at up to +/-3% clock error
+         * can corrupt an otherwise healthy bus with error frames, so going
+         * CAN-quiet is the neighbourly failure, not merely the safe one --
+         * suppress Tx on BOTH dialects rather than just flagging the wire
+         * data as suspect. Mechanism: the existing public dialect switches
+         * (can_n2k_set_n2k_enabled()/set_rvc_enabled(), can_n2k.h) rather
+         * than a new suppression path in can_n2k.c -- can_n2k_publish()
+         * already no-ops per-dialect on these flags (can_n2k.c), so this
+         * reuses a seam that already exists instead of adding one. Safe to
+         * call this early: main.c calls board_init() (which reaches this)
+         * BEFORE can_n2k_init(), and can_n2k_init() never resets these
+         * flags, so the false set here is not clobbered by the port coming
+         * up afterwards. A flag-only alternative (publish anyway, mark the
+         * telemetry payload untrustworthy) was rejected: nothing in the N2K/
+         * RV-C wire schemas defines an "ignore my bit-timing" signal, and a
+         * downstream node that does not honour a novel diagnostic field
+         * would still see frames arriving at the wrong bit rate -- actually
+         * not transmitting removes the corruption risk categorically rather
+         * than trusting every listener to opt in to distrust. */
+        can_n2k_set_n2k_enabled(false);
+        can_n2k_set_rvc_enabled(false);
+    }
+
+    /* USB clock: HSI48, independent of whichever SYSCLK path above won --
+     * USB tolerates CRS trim-when-present regardless (GH#38). If the fallback
+     * above already ran, HSI48 is already on; this second bounded OscConfig
+     * call is a harmless re-request (HAL treats "state already matches" as a
+     * no-op for an oscillator that is not currently the requested-off one). */
+    RCC_OscInitTypeDef hsi48 = {0};
+    hsi48.OscillatorType = RCC_OSCILLATORTYPE_HSI48;
+    hsi48.HSI48State      = RCC_HSI48_ON;
+    hsi48.PLL.PLLState    = RCC_PLL_NONE;
+    (void)HAL_RCC_OscConfig(&hsi48);
+
+    RCC_PeriphCLKInitTypeDef pclk = {0};
+    pclk.PeriphClockSelection = RCC_PERIPHCLK_USB;
+    pclk.UsbClockSelection    = RCC_USBCLKSOURCE_HSI48;
+    (void)HAL_RCCEx_PeriphCLKConfig(&pclk);
 
     __HAL_RCC_CRS_CLK_ENABLE();
     RCC_CRSInitTypeDef crs = {0};
@@ -31,6 +145,8 @@ void board_clock_config(void)
     crs.HSI48CalibrationValue = RCC_CRS_HSI48CALIBRATION_DEFAULT;
     HAL_RCCEx_CRSConfig(&crs);
 }
+
+bool board_clock_running_on_hse(void) { return s_hse_ok; }
 
 static void gpio_af(GPIO_TypeDef *port, uint32_t pins, uint32_t af, uint32_t otype)
 {

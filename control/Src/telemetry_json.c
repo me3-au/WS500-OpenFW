@@ -101,6 +101,8 @@ bool telem_json_line(char *chunk, int cap, cfg_json_sink_fn sink, void *ctx,
     cfg_json_w_key(&w, "can_boff");   w_u32(&w, d->can_bus_off_count);
     cfg_json_w_key(&w, "can_txdrop"); w_u32(&w, d->can_tx_dropped_count);
 
+    cfg_json_w_key(&w, "clk_hse_fail"); cfg_json_w_bool(&w, d->clk_hse_fail);
+
     cfg_json_w_end(&w);   /* diag */
     cfg_json_w_end(&w);   /* line object */
 

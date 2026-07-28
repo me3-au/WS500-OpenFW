@@ -25,7 +25,7 @@
  *          "crc":"ok|mismatch|unpatched|unavail",
  *          "stack_used":U,"stack_free":U,
  *          "errb":U,"errb_reinit":[U*3],"safe":U,
- *          "can_boff":U,"can_txdrop":U}}
+ *          "can_boff":U,"can_txdrop":U,"clk_hse_fail":B}}
  *
  * N = small integer, U = unsigned 32-bit decimal, F = float (non-finite → null,
  * the same "unset travels as null" rule the config wire uses, config_json.h),
@@ -63,6 +63,17 @@
  *                above, which is the LATCHED fault; this is the raw event tally)
  *   can_txdrop   can_n2k_tx_dropped_count() — frames dropped because the
  *                software Tx ring was full (§7 R6)
+ *   clk_hse_fail board_clock_running_on_hse() negated (GH#38): true iff the
+ *                8 MHz HSE crystal never reached HSERDY within the bounded
+ *                startup wait and SYSCLK fell back to HSI48+CRS for this
+ *                boot. A latched boot-time fact (clock source cannot change
+ *                again without a reset), not a live poll. CAN Tx is
+ *                suppressed for the rest of this boot whenever this is true
+ *                — see board.c's board_clock_config() — so a bus that keeps
+ *                hearing frames from this node implies clk_hse_fail is
+ *                false, but the converse (silence) can also mean the port
+ *                never came up at all; this key is what disambiguates that
+ *                for a technician reading the USB line locally.
  */
 #ifndef WS500_TELEMETRY_JSON_H
 #define WS500_TELEMETRY_JSON_H
@@ -115,6 +126,7 @@ typedef struct {
     uint32_t safe_state_entries;
     uint32_t can_bus_off_count;                /* can_n2k_bus_off_count() */
     uint32_t can_tx_dropped_count;             /* can_n2k_tx_dropped_count() */
+    bool     clk_hse_fail;                     /* !board_clock_running_on_hse() (GH#38) */
 } telem_diag_t;
 
 /*

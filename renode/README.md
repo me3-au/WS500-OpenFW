@@ -37,8 +37,21 @@ control loop turning on the actual target peripherals.
 The stock `stm32f072.repl` (→ `stm32f0.repl`) supplies everything the firmware
 touches; **no peripheral had to be hand-written**. Notable choices:
 
-- **RCC** — `Miscellaneous.STM32F0_RCC`. Mirrors `SWS←SW`, `HSERDY←HSEON`,
-  `PLLRDY←PLLON`, `HSI14RDY←HSI14ON`. **Does not** implement HSI48 (see risks).
+- **RCC** — **not `Miscellaneous.STM32F0_RCC`.** This bullet previously claimed
+  that compiled model mirrors `SWS←SW`/`HSERDY←HSEON`/`PLLRDY←PLLON`/
+  `HSI14RDY←HSI14ON`; that class does not exist anywhere in Renode 1.16.1's
+  shipped `platforms/` tree (confirmed by grep — only F4/L0/H7/WBA get a
+  compiled RCC model). F0/G0 get a generic `Python.PythonPeripheral`
+  "flip-flop" placeholder whose reads alternate between two canned values on
+  *every* call and whose writes are silently discarded entirely — HSERDY/
+  PLLRDY/HSI48RDY can never be observed set under it, full stop. Found during
+  GH#38 (switching SYSCLK from HSI48+CRS to HSE→PLL×6): direct monitor
+  probing produced noisy, write-independent alternating readbacks, which led
+  to reading the actual installed script instead of trusting this doc.
+  `ws500f072.repl` now overrides it with a real store-and-return, ready-bit-
+  mirroring model (same technique as the DMA override below); see that
+  override site for the full writeup and its "GH#38: SYSCLK now HSE→PLLx6"
+  heading, which supersedes bring-up risk #1 further down.
 - **ADC** — `Analog.STM32F0_ADC`. Writing `ADEN` sets `ADRDY`; `ADCAL` is a tag
   that reads back 0, so `HAL_ADCEx_Calibration_Start`'s wait exits immediately
   (no hang predicted).
@@ -274,7 +287,16 @@ Why this shape rather than the alternatives:
 
 Listed worst-first. Each is a concrete "if red, here's why."
 
-1. **RCC HSI48RDY absent (most likely to bite).** `STM32F0_RCC` leaves CR2
+1. **RCC HSI48RDY absent (most likely to bite).** *Superseded 2026-07-28
+   (GH#38): this item assumed `STM32F0_RCC`, which — see the RCC bullet under
+   "Renode models used" above — is not the model actually installed. The real
+   flip-flop placeholder never raised HSI48RDY either, for a different reason
+   (writes are discarded outright, not "CR2 bits reserved"), and
+   `ws500f072.repl`'s new RCC override fixes both HSI48RDY and, as of GH#38,
+   HSERDY/PLLRDY together. Left below for history; the fallback path it
+   describes (bounded timeout, survivable) is now board.c's own designed
+   behaviour rather than an accident of an absent ready bit.*
+   `STM32F0_RCC` leaves CR2
    bits 16/17 reserved, so `HSI48RDY` never reads 1. `board_clock_config()`
    **ignores** the `HAL_RCC_OscConfig` / `HAL_RCC_ClockConfig` return codes, so
    the expectation is a bounded ~2 ms `HAL_TIMEOUT` (gated on SysTick) and then

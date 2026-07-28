@@ -18,6 +18,7 @@
 #include "err_budget.h"
 #include "safe_state.h"
 #include "can_n2k.h"
+#include "board.h"           /* board_clock_running_on_hse() (GH#38) */
 #include "stm32f0xx_hal.h"   /* HAL_GetTick */
 #include <string.h>
 
@@ -94,6 +95,11 @@ static void telem_emit(void)
      * latched ERRB_CAN budget bit above — see can_n2k.h. */
     d.can_bus_off_count    = can_n2k_bus_off_count();
     d.can_tx_dropped_count = can_n2k_tx_dropped_count();
+
+    /* GH#38: latched boot-time fact, true iff HSE never reached HSERDY and
+     * SYSCLK fell back to HSI48+CRS -- CAN Tx is suppressed for the rest of
+     * this boot while this is true (board.c's board_clock_config()). */
+    d.clk_hse_fail = !board_clock_running_on_hse();
 
     char chunk[128];   /* same streaming-chunk shape as the config replies */
     (void)telem_json_line(chunk, (int)sizeof chunk, telem_sink, NULL,

@@ -7,7 +7,8 @@
 // file (platforms/cpus/stm32f072.repl, which itself pulls in stm32f0.repl)
 // already provides everything the WS500 firmware touches during init + loop:
 //
-//   rcc      Miscellaneous.STM32F0_RCC   @ 0x40021000   (see HSI48 note below)
+//   rcc      Python.PythonPeripheral     @ 0x40021000   (overridden below —
+//                                                       GH#38 RCC note)
 //   gpioA-F  GPIOPort.STM32_GPIOPort     @ 0x48000000..
 //   timer1   Timers.STM32_Timer          @ 0x40012C00   (field PWM, TIM1)
 //   timer2   Timers.STM32_Timer          @ 0x40000000   (free-running timebase)
@@ -31,17 +32,100 @@
 using "platforms/cpus/stm32f072.repl"
 
 // ---------------------------------------------------------------------------
-// KNOWN GAP — HSI48 (bring-up risk #1, see renode/README.md).
+// STOCK-PLATFORM BUG WORKAROUND — RCC (GH#38: SYSCLK now HSE->PLLx6, was
+// HSI48+CRS). Read this before touching board_clock_config()'s clock init.
 //
-// The stock STM32F0_RCC models CR2 (offset 0x34) with only HSI14 (bits 0-1)
-// and marks bits 16..31 reserved, so HSI48ON is dropped and HSI48RDY (bit 17)
-// always reads 0. board_clock_config() ISSUES HAL_RCC_OscConfig / ClockConfig
-// but IGNORES their return codes, so the missing ready bit produces a bounded
-// ~2 ms HAL_TIMEOUT (gated on SysTick) rather than an infinite spin, and
-// execution continues on the reset HSI clock. This is the #1 thing the first
-// CI run confirms. There is no clean way to force a reserved bit high from the
-// .repl/.resc; if CI shows a hang here, the fallback is a small custom RCC
-// register-init model (documented in the README), not a sysbus write.
+// CORRECTION to earlier bring-up notes: this file and renode/README.md
+// previously described the base platform's `rcc` peripheral as
+// `Miscellaneous.STM32F0_RCC`, a compiled model mirroring HSERDY<-HSEON /
+// PLLRDY<-PLLON / SWS<-SW. That description does not match Renode 1.16.1's
+// actually-installed platforms/cpus/stm32f0.repl: `STM32F0_RCC` does not
+// exist anywhere in this release (confirmed by grepping the whole `platforms/`
+// tree — only F4/L0/H7/WBA get a compiled RCC model; F0 and G0 get a generic
+// Python "flip-flop" placeholder). Its actual script, verbatim:
+//
+//     if request.IsInit: lastVal = 0
+//     elif request.IsRead:
+//         lastVal = 1 - lastVal
+//         if Offset == 0x0:  Value = lastVal * 0x83          # CR
+//         elif Offset == 0x4: Value = lastVal * 0xFFFFFFF8   # CFGR
+//         elif Offset == 0x24: Value = 0x0                   # CSR
+//         else: Value = lastVal * 0xFFFFFFFF                 # everything else
+//     # IsWrite is not handled at all -- every write is silently discarded.
+//
+// Every write to CR (HSEON, PLLON, HSI48ON via CR2's "everything else" arm)
+// is a no-op, and CR's read value alternates between 0x83 and 0x00 on every
+// single read regardless — HSERDY (bit 17) and PLLRDY (bit 25) can NEVER be
+// observed set, full stop, not just "unlikely": those bits are not part of
+// either alternated value. This was confirmed two ways during GH#38: (1)
+// reading the actual installed script above, and (2) direct `sysbus
+// ReadDoubleWord`/`WriteDoubleWord` probing against this exact platform,
+// whose noisy alternating 0x83/0x00 readings (with no correlation to the
+// writes in between) is exactly what the flip-flop predicts and was the clue
+// that led to reading the script in the first place.
+//
+// CONSEQUENCE FOR OUR FIRMWARE: HAL_RCC_OscConfig(HSE) will never see HSERDY,
+// so board_clock_config()'s bounded ~100 ms HSE_STARTUP_TIMEOUT wait (see
+// board.c) fires on every single emulated boot, and the firmware falls back
+// to HSI48 — which is NOT hung (the fallback is the whole point of GH#38's
+// bounded-wait design; a CI job that only ever exercises the fallback branch
+// still stays green), but it does mean the primary HSE path would get ZERO
+// coverage from `emulation` if left alone: every run would silently take the
+// same branch, forever, and a real regression in the HSE/PLL configuration
+// itself would never be caught here.
+//
+// FIX: override the peripheral's `script` property (a same-name, same-type
+// re-set — the DMA1 override below already establishes this is legal;
+// REDECLARING `rcc` with a different Renode type is what fails to load with
+// "Variable already declared", per that section) with a real store-and-return
+// model, narrowly scoped to exactly what Core/Src/board.c's
+// board_clock_config() touches: CR ready-bit mirroring (HSIRDY<-HSION,
+// HSERDY<-HSEON, PLLRDY<-PLLON), CFGR SWS<-SW (HAL_RCC_ClockConfig's switch-
+// wait loop polls this), and CR2 ready-bit mirroring (HSI14RDY<-HSI14ON,
+// HSI48RDY<-HSI48ON). Deliberately NOT modelled: CFGR2 PREDIV / CFGR PLLMUL
+// readback, so HAL_RCC_GetSysClockFreq()'s derived Hz value (used only to
+// reprogram SysTick's reload via HAL_InitTick, called at the end of every
+// HAL_RCC_ClockConfig) is not guaranteed exact under this stub — no worse
+// than the flip-flop it replaces, and the four existing CI cases already
+// pass against generous (5-30 s) Log Tester budgets, not tight real-time
+// ones. Every OTHER offset (CSR, AHBENR, APB1/2ENR, CFGR2, CFGR3, ...) falls
+// through to a plain store-and-return, same as before but at least
+// internally consistent (a write followed by a read now returns what was
+// written, instead of an unrelated alternating value) — nothing in this
+// firmware polls those back, so this is a strict improvement with no
+// observed way for it to regress the existing liveness/fault/IWDG/I2C cases.
+//
+// State does NOT reset across a software reset (SYSRESETREQ, the §7 R3 fault
+// test and the IWDG-starvation test both trigger one): Renode does not
+// re-issue IsInit to a PythonPeripheral just because the CPU core reset, so
+// a re-boot's board_clock_config() sees HSEON/PLLON already "1" from before
+// the reset and its own HSERDY/PLLRDY reads come back set immediately. Real
+// silicon does clear RCC to POR defaults on this path, so this stub is looser
+// than hardware here — but no existing test depends on RCC state actually
+// resetting, and a faster-than-hardware clock bring-up on the SECOND boot
+// cannot itself cause a timeout that a instantaneous bring-up avoids.
+// ---------------------------------------------------------------------------
+rcc:
+    script: '''
+if request.IsInit:
+    regs = {0x00: 0x83}   # POR reset: HSION|HSIRDY|HSITRIM default (real
+                          # STM32F0 CR reset value, confirmed against V6's
+                          # rcc_v6.py trace notes)
+elif request.IsRead:
+    v = regs.get(request.Offset, 0)
+    if request.Offset == 0x00:              # CR
+        if v & (1 << 0):  v |= (1 << 1)     # HSIRDY  <- HSION
+        if v & (1 << 16): v |= (1 << 17)    # HSERDY  <- HSEON
+        if v & (1 << 24): v |= (1 << 25)    # PLLRDY  <- PLLON
+    elif request.Offset == 0x04:            # CFGR
+        v = (v & ~0xC) | ((v & 0x3) << 2)   # SWS <- SW
+    elif request.Offset == 0x34:            # CR2
+        if v & (1 << 0):  v |= (1 << 1)     # HSI14RDY <- HSI14ON
+        if v & (1 << 16): v |= (1 << 17)    # HSI48RDY <- HSI48ON
+    request.Value = v
+elif request.IsWrite:
+    regs[request.Offset] = request.Value
+'''
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------

@@ -82,6 +82,7 @@ static telem_diag_t sample_diag(void)
     d.safe_state_entries = 1;
     d.can_bus_off_count    = 5;
     d.can_tx_dropped_count = 4000000000u;   /* > LONG_MAX: forces w_u32 */
+    d.clk_hse_fail         = true;          /* GH#38: on the HSI48 fallback */
     return d;
 }
 
@@ -144,6 +145,7 @@ void test_telemetry_json(void)
     CHECK(has("\"safe\":1"));
     CHECK(has("\"can_boff\":5"));
     CHECK(has("\"can_txdrop\":4000000000"));  /* u32 above LONG_MAX */
+    CHECK(has("\"clk_hse_fail\":true"));       /* GH#38 */
 
     /* All four CRC verdict strings, and nothing outside the closed set. */
     {
@@ -195,6 +197,10 @@ void test_telemetry_json(void)
         CHECK(emit(128, &tz, &dz));
         CHECK(cfg_json_validate(g_line, g_len - 1) == CFG_JSON_OK);
         CHECK(has("\"crashes\":0"));
+        /* GH#38: false is the common case (HSE came up normally) — the
+         * all-zero snapshot exercises it since sample_diag() above only
+         * covers the true (fallback) case. */
+        CHECK(has("\"clk_hse_fail\":false"));
     }
 
     /* NULL inputs refuse rather than emit a broken line. */

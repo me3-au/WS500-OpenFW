@@ -11,8 +11,24 @@
 #define WS500_BOARD_H
 
 #include "stm32f0xx_hal.h"
+#include <stdbool.h>
 
-/* ---- Clock: crystal-less USB, 48 MHz from HSI48 + CRS ---------------------- */
+/* ---- Clock: 8 MHz HSE crystal -> PLL x6 -> 48 MHz SYSCLK (GH#38) ----------- *
+ * Matches stock (recovered HSE+PLLx6 clock init, §0.6 V2; observed live under
+ * Renode, §0.6 V6) rather than the crystal-less HSI48+CRS this firmware used
+ * before GH#38. Reasoning: HSI48 is only trimmed by CRS while a USB host is
+ * feeding it SOF packets, and USB is this regulator's config/service port,
+ * not a permanent connection -- for essentially its whole operating life
+ * there is no host attached, so untrimmed HSI48 free-runs up to +/-3%, well
+ * outside CAN's bit-timing budget (~+/-0.5% with ordinary settings). HSI48
+ * stays enabled, but only as the USB peripheral clock source (see
+ * board_clock_config()'s HAL_RCCEx_PeriphCLKConfig call) -- USB tolerates
+ * CRS trim-when-present.
+ * Does NOT affect the rotor clamp or charge-stage timers: the clamp is a
+ * duty RATIO (rotor_rated_v / V_supply), independent of PWM carrier
+ * frequency, and 3% is trivial for a charge-stage timer. This is a CAN-
+ * correctness change, not a safety one -- see board_clock_config()'s header
+ * comment for the bounded-failure handling if the crystal does not start. */
 #define BOARD_SYSCLK_HZ        48000000UL
 
 /* ---- Field-drive PWM (alternator field) ----------------------------------- *
@@ -189,5 +205,17 @@
 
 void board_init(void);        /* clocks + all peripheral GPIO/init */
 void board_clock_config(void);
+
+/*
+ * True iff SYSCLK is currently running from the primary HSE->PLLx6 path
+ * (GH#38). False means board_clock_config() timed out waiting for HSERDY (or
+ * for the PLL to lock) and fell back to HSI48+CRS -- a boot-time outcome
+ * that cannot change again without a reset, so this is a latched fact for
+ * the life of the session, not a live poll. Surfaced on the 1 Hz telemetry
+ * line as diag.clk_hse_fail (telemetry_json.h) for the §7 R6 error surface;
+ * CAN Tx is also suppressed for the rest of this boot while false -- see the
+ * call site in board_clock_config().
+ */
+bool board_clock_running_on_hse(void);
 
 #endif /* WS500_BOARD_H */
