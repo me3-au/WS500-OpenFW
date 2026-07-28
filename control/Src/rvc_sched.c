@@ -6,8 +6,14 @@
 #include "rvc_sched.h"
 
 /* Single-bank device: no multi-instance story (mirrors n2k_sched.c's own
- * N2K_INSTANCE_DEFAULT). */
-#define RVC_INSTANCE_DEFAULT   0u
+ * N2K_INSTANCE_DEFAULT). RESOLVED (CAN_INTEGRATION.md §9.2 row 2,
+ * 2026-07-28): instance 0 decodes as "Invalid" in every DGN this module
+ * emits (RV-C Tables 6.5.2b/6.20.8b/6.20.9b); 1 is "Main House Battery
+ * Bank" / charger #1 — the correct default for the single bank/charger
+ * this device is. Used both as the CHARGER_STATUS/CHARGER_STATUS_2
+ * instance and as CHARGER_STATUS_2's associated DC-source instance
+ * (rvc_encode.h byte-1 note) — this device has exactly one of each. */
+#define RVC_INSTANCE_DEFAULT   1u
 
 /* Per-DGN periods (ms). Cited in rvc_sched.h's rvc_sched_tick doc comment. */
 #define RVC_PERIOD_CHARGER_STATUS_MS    5000u  /* Xantrex reference guide */

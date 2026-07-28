@@ -61,18 +61,31 @@ static void test_charger_status(void)
 {
     ctrl_telemetry_t t = snap_bulk();
     n2k_frame_t fr;
+    uint16_t raw_v, raw_i;
+    float decoded_a;
 
     /* Golden: voltage 54.00/0.05 = 1080 = 0x0438 -> 38 04
-     *         current 60.0/0.05  = 1200 = 0x04B0 -> B0 04
-     *         pct = 0.42*100/0.4 = 105 = 0x69
+     *         current offset-encoded (CAN_INTEGRATION.md §9.2 row 4):
+     *           raw = 32000 + 60.0/0.05 = 32000+1200 = 33200 = 0x81B0 -> B0 81
+     *         pct = 0.42*100/0.5 = 84 = 0x54 (§9.2 row 5: 0.5 %/bit, not 0.4)
      *         op state: BULK, binding THERMAL (not clamp) -> 2 (bulk)
      *         byte7: default-on-power-up(11) | recharge-en(11)<<2 |
      *                force-charge(1111)<<4 = 0x03|0x0C|0xF0 = 0xFF */
-    const uint8_t want[8] = { 0x00, 0x38, 0x04, 0xB0, 0x04, 0x69, 0x02, 0xFF };
+    const uint8_t want[8] = { 0x00, 0x38, 0x04, 0xB0, 0x81, 0x54, 0x02, 0xFF };
     CHECK(rvc_encode_charger_status(&t, 0, 0x23, &fr) == 1);
     CHECK(fr.id == 0x19FFC723u);   /* prio 6, DGN 0x1FFC7, SA 0x23 */
     CHECK(fr.dlc == 8);
     CHECK(memcmp(fr.data, want, 8) == 0);
+
+    /* Bug-class regression (CAN_INTEGRATION.md §9.2 row 4): a KNOWN positive
+     * charging current must decode back to a positive value through the
+     * documented offset formula (Table 5.3: raw*0.05 - 1600), not the old
+     * plain-unsigned reading that turned +60 A into -1588 A. */
+    raw_v = (uint16_t)(fr.data[1] | (fr.data[2] << 8));
+    raw_i = (uint16_t)(fr.data[3] | (fr.data[4] << 8));
+    CHECK(raw_v * 0.05 == 54.0);
+    decoded_a = (float)(raw_i * 0.05 - 1600.0);
+    CHECK(decoded_a == 60.0f);
 
     /* Operating-state ladder. */
     t.binding = CTRL_BIND_VOLTAGE_CLAMP;
@@ -88,11 +101,15 @@ static void test_charger_status(void)
     CHECK(rvc_encode_charger_status(&t, 0, 0x23, &fr) == 1);
     CHECK(fr.data[6] == 1);                        /* fault -> do not charge */
 
-    /* Negative net current clamps to 0, not a saturated/NA code. */
+    /* Negative net current clamps to 0 A -- under the offset encoding that
+     * is raw 0x7D00 (32000), NOT raw 0 (rvc_encode.c's inline comment: this
+     * is a semantic floor on desired charge current, not an encoding-
+     * limitation clamp -- the offset encoder COULD represent negative
+     * values here). */
     t.severity = CTRL_SEV_WARN;
     t.amps_batt = -10.0f;
     CHECK(rvc_encode_charger_status(&t, 0, 0x23, &fr) == 1);
-    CHECK(fr.data[3] == 0x00 && fr.data[4] == 0x00);
+    CHECK(fr.data[3] == 0x00 && fr.data[4] == 0x7D);
 
     /* NaN inputs -> not-available (0xFFFF / 0xFF). */
     t.vbat_pack_v = NAN; t.amps_batt = NAN; t.field_effort = NAN;
@@ -148,15 +165,32 @@ static void test_dc_source_status_1(void)
 {
     ctrl_telemetry_t t = snap_bulk();
     n2k_frame_t fr;
+    uint32_t raw_i;
+    double physical_a;
 
     /* Golden: voltage 54.00/0.05 = 1080 = 0x0438 -> 38 04
-     *         current offset: 2 000 000 000 + 60.0/0.001
-     *                       = 2 000 000 000 + 60 000 = 2 000 060 000
-     *                       = 0x77367E60 -> LE 60 7E 36 77 */
-    const uint8_t want[8] = { 0x00, 0x64, 0x38, 0x04, 0x60, 0x7E, 0x36, 0x77 };
+     *         current: SIGN NEGATED (CAN_INTEGRATION.md §9.2 row 6 --
+     *         t->amps_batt is charging-positive, this DGN's wire convention
+     *         is discharge-positive), then offset-encoded:
+     *           raw = 2 000 000 000 + (-60.0)/0.001
+     *               = 2 000 000 000 - 60 000 = 1 999 940 000
+     *               = 0x7734A9A0 -> LE A0 A9 34 77 */
+    const uint8_t want[8] = { 0x00, 0x64, 0x38, 0x04, 0xA0, 0xA9, 0x34, 0x77 };
     CHECK(rvc_encode_dc_source_status_1(&t, 0, 100, 0x23, &fr) == 1);
     CHECK(fr.id == 0x19FFFD23u);   /* prio 6, DGN 0x1FFFD, SA 0x23 */
     CHECK(memcmp(fr.data, want, 8) == 0);
+
+    /* Bug-class regression (CAN_INTEGRATION.md §9.2 row 6): a KNOWN
+     * positive charging current (t->amps_batt = +60 A) must decode, through
+     * the documented Table 5.3 formula (physical = (raw - 2e9) * 0.001,
+     * positive = discharge), to a NEGATIVE physical value -- i.e. the bank
+     * reads as recharging, not discharging -- and negating that physical
+     * value back must recover our own charging-positive +60 A. */
+    raw_i = (uint32_t)fr.data[4] | ((uint32_t)fr.data[5] << 8) |
+            ((uint32_t)fr.data[6] << 16) | ((uint32_t)fr.data[7] << 24);
+    physical_a = ((double)raw_i - 2000000000.0) * 0.001;
+    CHECK(physical_a == -60.0);
+    CHECK(-physical_a == (double)t.amps_batt);
 
     /* NaN -> NA (all 0xFF, both the u16 voltage and the u32 current). */
     t.vbat_pack_v = NAN; t.amps_batt = NAN;
@@ -165,12 +199,23 @@ static void test_dc_source_status_1(void)
     CHECK(fr.data[4] == 0xFF && fr.data[5] == 0xFF &&
          fr.data[6] == 0xFF && fr.data[7] == 0xFF);
 
-    /* Saturation at the top of the 32-bit field: an absurd 3 000 000 A
-     * pegs at 0xFFFFFFFE, one below the NA sentinel. */
-    t.amps_batt = 3000000.0f;
+    /* Saturation at the top of the 32-bit field: after negation, an extreme
+     * NET-DISCHARGE reading (amps_batt very negative) is the case that now
+     * saturates high -- pegs at 0xFFFFFFFE, one below the NA sentinel. */
+    t.amps_batt = -3000000.0f;
     CHECK(rvc_encode_dc_source_status_1(&t, 0, 100, 0x23, &fr) == 1);
     CHECK(fr.data[4] == 0xFE && fr.data[5] == 0xFF &&
          fr.data[6] == 0xFF && fr.data[7] == 0xFF);
+
+    /* Symmetric case: after negation, an extreme NET-CHARGE reading
+     * (amps_batt very positive) is the case that now floors at the wire
+     * field's own bottom (0x00000000) instead -- the sign flip moved which
+     * physical direction saturates which way, so both directions need
+     * covering, not just the one the old (unnegated) test happened to hit. */
+    t.amps_batt = 3000000.0f;
+    CHECK(rvc_encode_dc_source_status_1(&t, 0, 100, 0x23, &fr) == 1);
+    CHECK(fr.data[4] == 0x00 && fr.data[5] == 0x00 &&
+         fr.data[6] == 0x00 && fr.data[7] == 0x00);
 
     CHECK(rvc_encode_dc_source_status_1(NULL, 0, 100, 0x23, &fr) == -1);
 }

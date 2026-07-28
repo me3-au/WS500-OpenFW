@@ -41,8 +41,11 @@
  * Cerbo GX RV-C appendix. Items only a real bus can settle are marked
  * bench-pending (GH#32). NOTE: three encodings were found WRONG in the
  * process (charge-current offset, percent scale, DC current sign) — the
- * per-field notes below carry the verdicts; the encoder fixes are
- * TODO(GH#32) and BLOCK enabling RV-C Tx on a real bus.
+ * per-field notes below carried the verdicts; the encoder fixes landed in
+ * rvc_encode.c 2026-07-28 (CAN_INTEGRATION.md §9.2 rows 4-6). Whether a real
+ * Cerbo/analyzer now shows sane V/A signs and magnitudes remains
+ * bench-pending (§9.4, GH#32) — the encoding is now spec-correct, interop is
+ * unverified until a real bus.
  *
  * Wire conventions (differ from N2K in several places — see each site):
  *   - little-endian multi-byte fields (same as N2K);
@@ -151,29 +154,34 @@
  * RVC_DGN_CHARGER_STATUS (single frame, 8 B; layout spec-confirmed
  * 2026-07-28 against §6.20.8 Table 6.20.8b; cadence 5000 ms or on change,
  * Table 6.20.8a):
- *   0    instance — 1..250; 0 is "Invalid" (Table 6.20.8b), so the
- *        scheduler default MUST become 1 — REVISED, rvc_sched.c's
- *        RVC_INSTANCE_DEFAULT is currently 0, code change TODO(GH#32)
+ *   0    instance — 1..250; 0 is "Invalid" (Table 6.20.8b). RESOLVED
+ *        (CAN_INTEGRATION.md §9.2 row 2, 2026-07-28): rvc_sched.c's
+ *        RVC_INSTANCE_DEFAULT is now 1.
  *   1-2  charge voltage      u16 LE, 0.05 V/bit (Table 5.3 — settled).
  *        Spec semantics: "Control voltage: the voltage DESIRED to be
  *        delivered to the battery" — a target, not a measurement (the
  *        measured pair lives in CHARGER_STATUS_2). We currently send
  *        measured vbat_pack_v; acceptable first cut, but wire the
- *        regulation target in with the GH#32 encoder pass.
- *   3-4  charge current      u16 LE — REVISED (2026-07-28): Table 5.3's
- *        16-bit current type is OFFSET-encoded (0.05 A/bit, raw 0x7D00 =
- *        0 A, range -1600..+1612.5 A), NOT plain unsigned as currently
- *        implemented. A compliant decoder (raw*0.05 - 1600) reads our
- *        +12 A today as -1588 A. Encoder fix REQUIRED before RV-C Tx is
- *        enabled — TODO(GH#32). The >= 0 A reporting floor stays (this
- *        is desired CHARGE current), expressed as raw >= 0x7D00.
- *   5    charge current percent of max   u8 — REVISED (2026-07-28):
- *        RV-C's percent type is 0.5 %/bit (Table 5.3: uint8, 0-125 %),
- *        not the 0.4 %/bit J1939 Type-P guess. TODO(GH#32). Still
- *        approximated from field_effort (duty ratio) — the v1 snapshot
- *        has no measured percent-of-ceiling figure (signed off as an
- *        honest approximation of the spec's "control current as a percent
- *        of the maximum").
+ *        regulation target in with a future encoder pass (non-blocking,
+ *        §9.2 preamble).
+ *   3-4  charge current      u16 LE — RESOLVED (CAN_INTEGRATION.md §9.2
+ *        row 4, 2026-07-28): Table 5.3's 16-bit current type is
+ *        OFFSET-encoded (0.05 A/bit, raw 0x7D00 = 0 A, range
+ *        -1600..+1612.5 A), NOT plain unsigned as it was before. A
+ *        compliant decoder (raw*0.05 - 1600) was reading our +12 A as
+ *        -1588 A; rvc_encode.c now uses enc_u16_offset() here, the same
+ *        helper/zero-raw CHARGER_STATUS_2 already used correctly. The
+ *        >= 0 A reporting floor stays (this is desired CHARGE current,
+ *        not the signed net-battery value DC_SOURCE_STATUS_1 carries — see
+ *        rvc_encode.c's inline comment for why that floor is still
+ *        correct under the new encoding), expressed as raw >= 0x7D00.
+ *   5    charge current percent of max   u8 — RESOLVED (CAN_INTEGRATION.md
+ *        §9.2 row 5, 2026-07-28): RV-C's percent type is 0.5 %/bit (Table
+ *        5.3: uint8, 0-125 %), not the 0.4 %/bit J1939 Type-P guess.
+ *        Still approximated from field_effort (duty ratio) — the v1
+ *        snapshot has no measured percent-of-ceiling figure (signed off as
+ *        an honest approximation of the spec's "control current as a
+ *        percent of the maximum").
  *   6    operating state     u8 enum — spec-confirmed (Table 6.20.8b):
  *        0 disable, 1 not charging, 2 bulk, 3 absorption, 4 overcharge,
  *        5 equalize, 6 float, 7 constant voltage/current
@@ -197,12 +205,13 @@ int rvc_encode_charger_status(const ctrl_telemetry_t *t, uint8_t instance,
  * RVC_DGN_CHARGER_STATUS_2 (single frame, 8 B; layout spec-confirmed
  * 2026-07-28 against §6.20.9 Table 6.20.9b — it matches the earlier
  * thomasonw/RV-C reconstruction field-for-field):
- *   0    charger instance — 1..250, 0 "Invalid": default must become 1
- *        (REVISED, same rvc_sched.c TODO(GH#32) as CHARGER_STATUS byte 0)
+ *   0    charger instance — 1..250, 0 "Invalid". RESOLVED (CAN_INTEGRATION.md
+ *        §9.2 row 2, 2026-07-28): default is now 1, same rvc_sched.c
+ *        RVC_INSTANCE_DEFAULT as CHARGER_STATUS byte 0.
  *   1    DC source instance the charger is associated with (spec marks it
- *        DEPRECATED but defines 0 = invalid / 255 = unknown) — REVISED:
- *        send 1 (Table 6.5.2b: DC instance 1 = "Main House Battery Bank",
- *        the bank we regulate), not the current 0; TODO(GH#32)
+ *        DEPRECATED but defines 0 = invalid / 255 = unknown) — RESOLVED:
+ *        we send 1 (Table 6.5.2b: DC instance 1 = "Main House Battery Bank",
+ *        the bank we regulate), via the same RVC_INSTANCE_DEFAULT.
  *   2    charger priority ("0 = unassigned, higher value = higher
  *        priority") — the SAME value rvc_rbm_t uses for RBM arbitration,
  *        passed in so this encoder stays pure (tier verdict: 80, the
@@ -227,8 +236,9 @@ int rvc_encode_charger_status_2(const ctrl_telemetry_t *t, uint8_t instance,
 /*
  * RVC_DGN_DC_SOURCE_STATUS_1 (single frame, 8 B; layout spec-confirmed
  * 2026-07-28 against §6.5.2 Table 6.5.2b; normal broadcast gap 500 ms):
- *   0    DC instance — REVISED: 1 = "Main House Battery Bank" (0 is
- *        "Invalid"); scheduler default 0 must become 1, TODO(GH#32)
+ *   0    DC instance — RESOLVED (CAN_INTEGRATION.md §9.2 row 2,
+ *        2026-07-28): 1 = "Main House Battery Bank" (0 is "Invalid");
+ *        scheduler default is now 1.
  *   1    device priority — the RBM arbitration value (rvc_sched.h; spec
  *        tiers in Table 6.5.2b, verdict 80 = Charger). This is the field
  *        other nodes read to decide whether WE are the winning master for
@@ -238,13 +248,13 @@ int rvc_encode_charger_status_2(const ctrl_telemetry_t *t, uint8_t instance,
  *   4-7  dc current   u32 LE, 1 mA/bit, offset-encoded raw 0x77359400
  *        (2 000 000 000) = 0 A — settled: Table 5.3 states the zero code
  *        verbatim, closing what was the weakest-evidenced constant in
- *        this file. SIGN REVISED (2026-07-28): Table 6.5.2b defines
- *        POSITIVE as current flowing FROM the source (battery
- *        discharging), negative as the battery being recharged — the
- *        OPPOSITE of t->amps_batt's charging-positive convention. The
- *        encoder currently passes amps_batt through unnegated, so a
- *        charging bank would display as discharging. Encoder fix (negate)
- *        REQUIRED before RV-C Tx is enabled — TODO(GH#32).
+ *        this file. SIGN RESOLVED (CAN_INTEGRATION.md §9.2 row 6,
+ *        2026-07-28): Table 6.5.2b defines POSITIVE as current flowing
+ *        FROM the source (battery discharging), negative as the battery
+ *        being recharged — the OPPOSITE of t->amps_batt's charging-positive
+ *        convention. The encoder now negates amps_batt before encoding, so
+ *        a charging bank encodes negative (recharging) as the spec
+ *        intends, not positive (discharging).
  *
  * Returns 1, or -1 on NULL args.
  */

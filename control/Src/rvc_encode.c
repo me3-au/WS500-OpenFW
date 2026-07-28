@@ -66,8 +66,14 @@ static uint32_t enc_u32_offset(float v, double res, long long zero_raw)
     return (uint32_t)l;
 }
 
-/* J1939 SPN "Type P" percent convention (0.4 %/bit, 0..250 = 0..100 %,
- * rvc_encode.h [SPEC-SIGNOFF]). `frac` is 0..1 (not 0..100). */
+/* RV-C percent type: RESOLVED (CAN_INTEGRATION.md §9.2 row 5, 2026-07-28)
+ * against RV-C Table 5.3 — uint8, 0.5 %/bit, valid range 0-125 % (raw
+ * 0-250), NOT the 0.4 %/bit J1939 "Type P" convention previously guessed.
+ * `frac` is 0..1 (not 0..100). The `l > 250` clamp below was already
+ * hard-coded to 250 for the old scale's "100 %" boundary; under the new
+ * 0.5 %/bit scale, raw 250 IS the spec's own upper bound (125 %), so the
+ * clamp needed no change beyond the resolution passed in at each call
+ * site. */
 static uint8_t enc_pct(float frac, double res_pct_per_bit)
 {
     long long l;
@@ -122,8 +128,25 @@ int rvc_encode_charger_status(const ctrl_telemetry_t *t, uint8_t instance,
     float amps;
     if (!t || !out) return -1;
 
-    /* Charge current cannot go negative in this field (rvc_encode.h) — a
-     * net-discharge reading clamps at the field's own floor. */
+    /* Charge current field: RESOLVED (CAN_INTEGRATION.md §9.2 row 4,
+     * 2026-07-28) — RV-C Table 5.3's 16-bit current type is OFFSET-encoded
+     * (0.05 A/bit, raw 0x7D00 = 0 A), not plain unsigned; a compliant
+     * decoder was reading our +12 A as -1588 A. Switched to enc_u16_offset
+     * below, the same helper/zero-raw CHARGER_STATUS_2 already uses
+     * correctly for this same physical quantity.
+     *
+     * The pre-existing "clamp negative to 0" floor is KEPT, but the
+     * reasoning changes: it is no longer working around the old encoding's
+     * inability to represent negative values (the offset encoding CAN
+     * represent them — enc_u16_offset(-x, ...) is a legal, non-NA raw code
+     * below 0x7D00). It survives because of what this field MEANS: RV-C
+     * Table 6.20.8b's "charge current" is the charger's DESIRED delivery
+     * target, not measured net battery current (that signed value lives in
+     * DC_SOURCE_STATUS_1, see below) — commanding a negative charge target
+     * has no meaning for a device that only ever charges, so a net-
+     * discharge telemetry reading still floors at 0 A / raw 0x7D00 here.
+     * This is a real semantic floor, not encoding-limitation clamping, so
+     * it does not hide any data the field is meant to carry. */
     amps = t->amps_batt;
     if (isfinite(amps) && amps < 0.0f) amps = 0.0f;
 
@@ -131,8 +154,8 @@ int rvc_encode_charger_status(const ctrl_telemetry_t *t, uint8_t instance,
     out->dlc = 8;
     put_u8 (out->data, &o, instance);
     put_u16(out->data, &o, enc_u16_unsigned(t->vbat_pack_v, 0.05));  /* charge V */
-    put_u16(out->data, &o, enc_u16_unsigned(amps, 0.05));            /* charge A */
-    put_u8 (out->data, &o, enc_pct(t->field_effort, 0.4));           /* % of max */
+    put_u16(out->data, &o, enc_u16_offset(amps, 0.05, 32000));       /* charge A */
+    put_u8 (out->data, &o, enc_pct(t->field_effort, 0.5));           /* % of max */
     put_u8 (out->data, &o, rvc_operating_state(t));                  /* op state */
     /* byte7: default-on-power-up(2b NA) | auto-recharge-enable(2b NA) |
      * force-charge(4b, 15 = undefined — Rx not wired up, TODO(GH#10)). */
@@ -174,7 +197,13 @@ int rvc_encode_dc_source_status_1(const ctrl_telemetry_t *t, uint8_t instance,
     put_u8 (out->data, &o, instance);
     put_u8 (out->data, &o, device_priority);
     put_u16(out->data, &o, enc_u16_unsigned(t->vbat_pack_v, 0.05));
-    put_u32(out->data, &o, enc_u32_offset(t->amps_batt, 0.001, 2000000000LL));
+    /* Sign: RESOLVED (CAN_INTEGRATION.md §9.2 row 6, 2026-07-28) — RV-C
+     * Table 6.5.2b defines positive current as flow FROM the source
+     * (discharging); t->amps_batt is charging-positive (control/Inc/
+     * telemetry.h), the opposite convention. Negated here so a charging
+     * bank now encodes as negative (recharging) rather than reading as
+     * discharging on a compliant decoder. */
+    put_u32(out->data, &o, enc_u32_offset(-t->amps_batt, 0.001, 2000000000LL));
     return 1;
 }
 

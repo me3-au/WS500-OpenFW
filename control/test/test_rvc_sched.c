@@ -109,7 +109,10 @@ static void test_rbm_defer_and_resume(void)
     n2k_frame_t out[16];
     n2k_frame_t rx;
     int n;
-    rvc_sched_init(&s, RVC_OUR_DEVICE_PRIORITY);   /* our priority: 100 */
+    rvc_sched_init(&s, RVC_OUR_DEVICE_PRIORITY);   /* our priority: 80
+                                                     * (RV-C Charger tier,
+                                                     * CAN_INTEGRATION.md
+                                                     * §9.2 row 3) */
 
     /* Prime: everything fires once (nothing to defer yet). */
     n = rvc_sched_tick(&s, 0u, true, 0x24u, &t, out, 16);
@@ -118,7 +121,8 @@ static void test_rbm_defer_and_resume(void)
     /* A higher-priority competitor (119, e.g. a dedicated BMS/shunt per the
      * Victron worked example rvc_sched.h cites) broadcasts DC_SOURCE_STATUS_1.
      * A LOWER-or-equal priority competitor must NOT cause deferral. */
-    make_dc1_frame(80u, 0x50u, &rx);   /* lower than us: ignored */
+    make_dc1_frame(60u, 0x50u, &rx);   /* lower than us (60 = RV-C inverter
+                                        * tier, Table 6.5.2b): ignored */
     rvc_sched_rx(&s, 500u, rx.id, rx.data, rx.dlc);
     CHECK(!rvc_rbm_defer(&s.rbm, 500u));
 

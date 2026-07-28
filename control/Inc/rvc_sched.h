@@ -45,15 +45,16 @@
  *    handled). Compliant as-is; emitting the EE00 form natively is
  *    optional polish.
  *
- * 2. Preferred start address: RVC_PREFERRED_ADDR (Core/Src/can_n2k.c) is
- *    35, inside RV-C's reserved/static DSA space (Table 7.2: 0-63). A
- *    charger-class device's preferred DYNAMIC range is 128-143 ("Power
- *    Components" — the range Table 7.2 gives Converter #1/#2 and Charge
- *    Controller). §3.3.2 permits the J1939-style start-low-and-count-up
- *    technique n2k_addrclaim.c uses, but the START address must sit in
- *    the device type's range — so 35 must become 128 before RV-C Tx is
- *    ever enabled on a real bus (walking past 143 under contention is
- *    fine; the spec's own fallback rules leave the range too).
+ * 2. Preferred start address: RESOLVED (CAN_INTEGRATION.md §9.2 row 7,
+ *    2026-07-28) — RVC_PREFERRED_ADDR (Core/Src/can_n2k.c) was 35, inside
+ *    RV-C's reserved/static DSA space (Table 7.2: 0-63). A charger-class
+ *    device's preferred DYNAMIC range is 128-143 ("Power Components" —
+ *    the range Table 7.2 gives Converter #1/#2 and Charge Controller).
+ *    §3.3.2 permits the J1939-style start-low-and-count-up technique
+ *    n2k_addrclaim.c uses, but the START address must sit in the device
+ *    type's range — RVC_PREFERRED_ADDR is now 128 (walking past 143 under
+ *    contention is fine; the spec's own fallback rules leave the range
+ *    too).
  *
  * bench-pending (GH#32): first real-bus session, capture our claim and a
  * Cerbo-in-RV-C-profile claim (expect 18EE00xx/18EEFFxx forms, DP=0) and
@@ -100,19 +101,17 @@ typedef struct {
 } rvc_rbm_t;
 
 /*
- * Our own DC_SOURCE_STATUS device-priority value. RESOLVED (2026-07-28)
- * from spec text: RV-C Table 6.5.2b enumerates the tiers — 120 battery
- * SOC/BMS device, 100 inverter/charger, 80 CHARGER, 60 inverter, 40
- * voltmeter/ammeter, 20 voltmeter, 0 "no priority, always reporting" —
- * and adds "designers should consider making this value configurable".
- * An engine-driven alternator regulator is a charger, not an
- * inverter/charger, so the earlier 100 guess (inverter/charger tier) is
- * REVISED: the shipped value must be 80 (code change TODO(GH#32) — this
- * pass is spec/comments only, so the define below still reads 100 until
- * that lands). 80 keeps us below a BMS/battery monitor (120 — which
- * should own SOC/capacity truth) and above inverters and passive meters:
- * exactly the arbitration shape the RBM election wants. */
-#define RVC_OUR_DEVICE_PRIORITY   100u
+ * Our own DC_SOURCE_STATUS device-priority value. RESOLVED (CAN_INTEGRATION.md
+ * §9.2 row 3, 2026-07-28) from spec text: RV-C Table 6.5.2b enumerates the
+ * tiers — 120 battery SOC/BMS device, 100 inverter/charger, 80 CHARGER, 60
+ * inverter, 40 voltmeter/ammeter, 20 voltmeter, 0 "no priority, always
+ * reporting" — and adds "designers should consider making this value
+ * configurable". An engine-driven alternator regulator is a charger, not an
+ * inverter/charger, so the earlier 100 (inverter/charger tier) was wrong;
+ * shipped value is now 80. 80 keeps us below a BMS/battery monitor (120 —
+ * which should own SOC/capacity truth) and above inverters and passive
+ * meters: exactly the arbitration shape the RBM election wants. */
+#define RVC_OUR_DEVICE_PRIORITY   80u
 
 /*
  * "Has a higher-priority competitor gone quiet" timeout. RV-C specifies

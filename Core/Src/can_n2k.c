@@ -38,19 +38,20 @@
  * step, CAN_INTEGRATION.md's own "verify on real hardware" caveat.] */
 #define N2K_PREFERRED_ADDR    34u
 
-/* NMEA 2000 Device Class 35 "Electrical Generation" / Device Function 140
- * "Alternator" (within Industry Group 4 marine, N2K_PROP_INDUSTRY from
- * n2k_encode.h, which IS settled). [SPEC-SIGNOFF]: these two numeric codes
- * are reproduced from the public NMEA2000 Appendix B / ISO 11783-2 device
- * class & function tables (the same ones every open N2K stack, e.g.
- * ttlappalainen/NMEA2000, hard-codes) from general familiarity, not from a
- * spec document checked into this repo — verify against the official list
- * (or simply how a real Cerbo/analyzer categorizes the device) before
- * treating this as authoritative. This is Tx-only telemetry
- * (CAN_INTEGRATION.md §0): getting it wrong miscategorizes the device on a
- * third-party display, it cannot reach the field-drive path. */
+/* NMEA 2000 Device Class 35 "Electrical Generation" / Device Function 141
+ * "DC Generator/Alternator" (within Industry Group 4 marine, N2K_PROP_INDUSTRY
+ * from n2k_encode.h, which IS settled). RESOLVED (CAN_INTEGRATION.md §9.2 row
+ * 1, 2026-07-28) against the NMEA 2000 device class & function codes v2.00
+ * table (machine-readably mirrored in canboat's DEVICE_FUNCTION table): within
+ * class 35, function 140 is "Engine" and 141 is "DC Generator/Alternator" —
+ * the earlier 140 value (carried forward from general familiarity, not a
+ * checked source) miscategorized this device as an engine. This is Tx-only
+ * telemetry (CAN_INTEGRATION.md §0): getting it wrong miscategorizes the
+ * device on a third-party display, it cannot reach the field-drive path.
+ * Real-bus confirmation that a Cerbo/analyzer now shows the corrected class/
+ * function remains bench-pending (§9.4, GH#18). */
 #define N2K_DEVICE_CLASS      35u
-#define N2K_DEVICE_FUNCTION   140u
+#define N2K_DEVICE_FUNCTION   141u
 
 /* 126998 Configuration Information: installation description strings are
  * normally set by the installer (not yet exposed via config_protocol.c), so
@@ -127,11 +128,17 @@ static uint64_t build_name(void)
  * which per ISO 11783 means distinct claimed addresses too). Differs from
  * build_name() above only in industry_group/device_class/device_function —
  * exactly the "parameter, not new code" split the task brief anticipated. */
-#define RVC_PREFERRED_ADDR   35u   /* arbitrary distinct starting point from
-                                   * N2K_PREFERRED_ADDR — avoids our own two
-                                   * identities needlessly contesting the
-                                   * same address on first boot; not load-
-                                   * bearing for correctness either way */
+/* Preferred start address: RESOLVED (CAN_INTEGRATION.md §9.2 row 7,
+ * 2026-07-28). RV-C Table 7.2 reserves 0-63 as static/DSA space; a
+ * charger-class device's dynamic range is 128-143 ("Power Components" — the
+ * range Table 7.2 gives Converter #1/#2 and Charge Controller). The old
+ * value of 35 sat inside the reserved static range, which §3.3.2 does not
+ * license as a start-and-count-up point. n2k_addrclaim.c's start-low-and-
+ * count-up-on-contention technique is itself permitted (§3.3.2) — it just
+ * has to START inside the device type's own range, so 128 it is; walking
+ * past 143 under contention is fine, the spec's own fallback rules leave
+ * the range too. */
+#define RVC_PREFERRED_ADDR   128u
 
 /* [SPEC-SIGNOFF]: no RVIA-assigned manufacturer code exists for this open
  * project, same honest-uncertain stance as N2K_PROP_MFG_CODE — top of the
