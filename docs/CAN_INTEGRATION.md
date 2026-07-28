@@ -21,26 +21,32 @@
 > bench-pending, and the device class/function codes it turns on are marked
 > `[SPEC-SIGNOFF]` in `Core/Src/can_n2k.c` until then.
 >
-> **§3 (Rx / control-in), partial as of deliverable #10:** the §1 dialect-
-> neutral interface (`control/bms_rx.h`/`.c`, host-tested) plus ONE vendor
-> driver — the CAN-BMS/REC/JK 11-bit standard-ID frame set (`0x351`/`0x355`/
-> `0x356`/`0x35A`) — decodes into `ctrl_ceilings_t.bms_ccl_w` and
-> `ctrl_measured_t.soc_pct`/`soc_trusted`, with per-signal loss-of-signal
-> fallback raising `CTRL_FAULT_LOST_BMS` (`Core/Src/main.c`). Byte layout and
-> scale factors are `[SPEC-SIGNOFF]`/bench-pending — reconstructed from public
-> documentation of this frame family, not verified against a REC/JK datasheet
-> or bench unit; alarm/warning bytes are decoded at byte-pair granularity only
-> (which byte, not which bit) for the same reason. **Two gaps found while
-> building this, both `[SPEC-GAP]`:** (1) **CVL has no consumer in the control
-> core** — `ctrl_ceilings_t` is Watts-only and `ctrl_profile_t.cv_target_vcell`
-> takes no external override, so this driver decodes and exposes CVL but it
-> is not yet in any min(); §6.3's "CVL below the profile CV target simply wins
-> in the min()" is not implemented. (2) **pre-disconnect is not decodable**
-> from the REC/JK frame set — no verified bit exists in `0x35A` for it; the
-> field is exposed on the interface and always reads false. Victron DVCC-via-
-> GX, JK vendor-quirk layers, J1939 engine input, N2K 127508/127506 inbound
-> battery-monitor ingestion, and multi-regulator sync (§5) remain
-> `TODO(GH#10)`.
+> **§3 (Rx / control-in), as of deliverable #10 (both hard preconditions
+> closed 2026-07-28):** the §1 dialect-neutral interface (`control/bms_rx.h`/
+> `.c`, host-tested) plus ONE vendor driver — the CAN-BMS/REC/JK 11-bit
+> standard-ID frame set (`0x351`/`0x355`/`0x356`/`0x35A`/`0x35C`) — decodes
+> into `ctrl_ceilings_t.bms_ccl_w`/`bms_cvl_vcell`,
+> `ctrl_measured_t.soc_pct`/`soc_trusted`/`pre_disconnect`, with per-signal
+> loss-of-signal fallback raising `CTRL_FAULT_LOST_BMS` (`Core/Src/main.c`).
+> Byte layout and scale factors are `[SPEC-SIGNOFF]`/bench-pending —
+> reconstructed from public documentation of this frame family, not verified
+> against a REC/JK datasheet or bench unit; alarm/warning bytes are decoded at
+> byte-pair granularity only (which byte, not which bit) for the same reason.
+> **The two gaps this section used to flag are now closed:** (1) **CVL has a
+> consumer** — `ctrl_ceilings_t.bms_cvl_vcell` (V/cell) is min()'d into the CV
+> target selection in `control.c`'s `ctrl_tick`, structurally only-ever-
+> lowering it (§6.3's "CVL below the profile CV target simply wins in the
+> min()"), telemetered distinctly as `CTRL_BIND_BMS_CVL`. (2) **pre-disconnect
+> is decoded** from `0x35C`'s charge-enable bit (byte 0 bit 0) deasserting —
+> the honest source available in this frame family absent a dedicated bit in
+> `0x35A` — and drives an unconditional soft ramp of `field_effort` to zero
+> (`CTRL_PREDISC_RAMP_S` = 0.3 s) applied last in `ctrl_tick`, in every state.
+> **This pre-disconnect ramp is field-drive-path logic and needs its
+> Fable-tier safety review before merge** (repo policy); not yet performed as
+> of this entry. Victron DVCC-via-GX, JK vendor-quirk layers, J1939 engine
+> input, N2K 127508/127506 inbound battery-monitor ingestion, multi-regulator
+> sync (§5), and a `bms_required` config flag (a dead-at-power-on BMS today
+> reads identically to "none wired") remain `TODO(GH#10)`.
 
 The regulator has **one** CAN bus (bxCAN on the WS500). Over that single bus it speaks
 several dialects at once — NMEA 2000, J1939, Victron VE.Can, RV-C, and CAN-BMS frames —

@@ -34,6 +34,9 @@ static inline ctrl_ceilings_t test_ceil_none(void)
         .alt_absolute_w = CTRL_CEILING_INACTIVE, .alt_capability_w = CTRL_CEILING_INACTIVE,
         .belt_w = CTRL_CEILING_INACTIVE, .engine_w = CTRL_CEILING_INACTIVE,
         .user_cap_w = CTRL_CEILING_INACTIVE,
+        .bms_cvl_vcell = NAN,   /* deliverable #10: inactive by default (NAN,
+                                 * not CTRL_CEILING_INACTIVE -- this one field
+                                 * is V/cell, not Watts; see control.h) */
     };
     return c;
 }

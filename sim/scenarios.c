@@ -224,6 +224,96 @@ void scn_bms_steps(void)
 }
 
 /* --------------------------------------------------------------------------
+ * 12) BMS CVL + pre-disconnect (deliverable #10's two hard preconditions,
+ *     PROFILE_SPEC_LFP.md §6/§8.1): a BMS lowering CVL mid-charge is honored
+ *     (voltage held near the LOWER target, not the profile's own), and a
+ *     pre-disconnect warning mid-charge drives the field to zero, verified
+ *     before the deadline, with the #1 rotor-clamp property intact
+ *     throughout (checked every tick by sil.c's own invariants).
+ * -------------------------------------------------------------------------- */
+void scn_bms_cvl_predisconnect(void)
+{
+    banner("bms_cvl_predisconnect (deliverable #10 preconditions)");
+
+    /* ---- Part 1: CVL lowers the effective CV target mid-charge --------- */
+    {
+        sil_t s; sil_init(&s, 0xC7A70001u, 0.85f);   /* near the knee -- reaches
+                                                      * the CV wall in this
+                                                      * scenario's time budget
+                                                      * (cf. scn_charge_rest_cycle,
+                                                      * ~63 min from soc 0.55) */
+        s.engine_rpm = 2800.0f;         /* cruise: enough EMF headroom to reach CV */
+        /* Disarm the two timer-based charged-exits for this scenario only:
+         * held-at-CV and tail-power would otherwise carry BULK into FLOAT
+         * once voltage settles (clamped by either target), which is a real
+         * and correct behavior but not what THIS scenario is isolating --
+         * the far backstop (t_charge_max_min, default 8 h) still applies and
+         * is nowhere near this scenario's ~50 min budget. */
+        s.g.cv_hold_exit_min = 0;
+        s.g.p_tail_w = -1.0f;
+
+        /* Charge for a while with NO CVL: confirm the pack is genuinely
+         * headed toward the profile's own 3.60 V/cell target (establishes
+         * that without a BMS, nothing would have stopped it there). */
+        for (uint32_t i = 0; i < 15u * 60u * 100u; i++) sil_step(&s);   /* 15 min */
+        CHECK(s.inv_violations == 0);
+        CHECK(s.cmd.state == CTRL_BULK);
+        CHECK(s.plant.vbus_v / 16.0f < 3.60f + 0.02f);   /* not yet over target */
+
+        /* BMS now asserts CVL = 3.50 V/cell, below the profile's 3.60 target
+         * (PROFILE_SPEC_LFP.md §6: "CVL below the profile CV target simply
+         * wins in the min()"). Run long enough to settle. */
+        s.bms_cvl_vcell = 3.50f;
+        bool saw_cvl_bind = false;
+        float max_vcell_after = 0.0f;
+        for (uint32_t i = 0; i < 35u * 60u * 100u; i++) {   /* 35 min */
+            sil_step(&s);
+            const float vcell = s.plant.vbus_v / 16.0f;
+            if (vcell > max_vcell_after) max_vcell_after = vcell;
+            if (s.cmd.binding == CTRL_BIND_BMS_CVL) saw_cvl_bind = true;
+        }
+        CHECK(s.inv_violations == 0);
+        CHECK(saw_cvl_bind);                       /* CVL actually did the clamping */
+        CHECK(max_vcell_after <= 3.52f);           /* held near the LOWERED target */
+        CHECK(max_vcell_after >= 3.45f);           /* -- not just coincidentally low */
+        printf("   CVL: max V/cell after assertion = %.4f (target 3.50, profile 3.60)\n",
+               (double)max_vcell_after);
+    }
+
+    /* ---- Part 2: pre-disconnect ramps the field to zero, verified before
+     * the deadline ------------------------------------------------------- */
+    {
+        sil_t s; sil_init(&s, 0xC7A70002u, 0.50f);
+        s.engine_rpm = 2800.0f;
+
+        /* Settle into strong BULK charging (mirrors scn_bms_steps' own
+         * warmup) before the warning lands. */
+        for (uint32_t i = 0; i < 90u * 100u; i++) { s.plant.soc = 0.50f; sil_step(&s); }
+        CHECK(s.cmd.state == CTRL_BULK);
+        CHECK(s.cmd.field_duty > 0.05f);           /* genuinely charging, not idle */
+
+        s.pre_disconnect = true;
+
+        /* Deadline: 1.0 s -- ~3x CTRL_PREDISC_RAMP_S (0.3 s, control.c), a
+         * generous margin over the ramp's own bound so this scenario isn't
+         * a knife-edge timing assertion, while still being the "order of a
+         * second, not tens" the spec calls for. */
+        for (uint32_t i = 0; i < 100u; i++) { s.plant.soc = 0.50f; sil_step(&s); }
+        CHECK(s.inv_violations == 0);
+        CHECK(s.cmd.field_duty == 0.0f);           /* field verifiably at zero... */
+        CHECK(s.plant.i_field_a < 0.05f);          /* ...confirmed in the physical plant too */
+
+        /* Holds at zero for as long as the warning stays asserted -- not a
+         * one-tick blip, and not periodically re-armed. */
+        for (uint32_t i = 0; i < 5u * 100u; i++) {
+            s.plant.soc = 0.50f; sil_step(&s);
+            CHECK(s.cmd.field_duty == 0.0f);
+        }
+        CHECK(s.inv_violations == 0);
+    }
+}
+
+/* --------------------------------------------------------------------------
  * 4) Engine RPM transients: idle↔cruise steps and stall-to-zero. Output
  *    follows physics; no spurious faults; clamp holds throughout.
  * -------------------------------------------------------------------------- */

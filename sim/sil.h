@@ -42,6 +42,12 @@ typedef struct {
     ctrl_isrc_tier_t isrc; /* shunt tier fed to the core */
     bool  feed_soc;        /* feed plant SOC as trusted SOC */
     float bms_ccl_w;       /* BMS ceiling (INACTIVE = none) */
+    float bms_cvl_vcell;   /* deliverable #10: BMS charge-voltage limit,
+                            * V/CELL (NAN = none/inactive) — scenarios set
+                            * this directly rather than routing through
+                            * bms_rx.c, matching how bms_ccl_w above is
+                            * already fed straight in as a ceiling */
+    bool  pre_disconnect;  /* deliverable #10: BMS pre-disconnect warning */
     float user_cap_w;
     float engine_w;
     uint32_t ext_faults_extra;  /* extra app-detected faults OR'd in */

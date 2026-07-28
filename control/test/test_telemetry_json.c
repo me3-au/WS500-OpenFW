@@ -112,7 +112,12 @@ void test_telemetry_json(void)
     CHECK(has("\"standby\":0"));
     CHECK(has("\"profile\":2"));
     CHECK(has("\"field\":0.42"));
-    CHECK(has("\"bind\":3"));
+    /* CTRL_BIND_THERMAL's ordinal shifted 3->4 when deliverable #10 inserted
+     * CTRL_BIND_BMS_CVL ahead of it in ctrl_bind_src_t (control.h) -- the wire
+     * is a raw enum ordinal by design (client owns pretty-printing,
+     * telemetry_json.h), so this is exactly the kind of renumbering that is
+     * expected pre-v1 and just needs the golden value updated to match. */
+    CHECK(has("\"bind\":4"));
     CHECK(has("\"bind_w\":1200"));
     CHECK(has("\"faults\":4294967295"));
     CHECK(has("\"sev\":1"));

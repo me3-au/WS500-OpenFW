@@ -220,6 +220,81 @@ coolant temperature ≥ `warmup_coolant_c` when engine temp is available on CAN
 installs that want reduced load on a cold engine rather than a binary gate.
 Unset = plain timer behavior.
 
+### 2.4 Precedence — DVCC, BMS, and local limits
+
+**There is no priority ladder between sources, and that is the design.** A ranked
+"BMS beats local" or "DVCC beats BMS" scheme has to answer "what if the winner is
+wrong or missing?", and every answer to that question is a way to charge harder than
+something present on the system asked for. This regulator answers it structurally
+instead: **every active constraint is in force simultaneously, and the most
+restrictive one governs.** An external source can only ever *tighten* the outcome.
+It can never raise a local limit, and it can never be the reason a local limit is
+ignored.
+
+Concretely, four layers apply in this order, each unable to be loosened by the ones
+before it:
+
+**1. The Watts min() — `ctrl_arbitrate()` (§2).** All power ceilings compete on equal
+footing, whatever their origin: `thermal`, `bms_ccl` *(BMS or DVCC charge-current
+limit)*, `battery_c`, `wiring`, `alt_absolute`, `alt_capability`, `belt`, `engine`,
+`user_cap`. Lowest wins and is reported as the binding source. Absent, stale, or
+implausible ceilings are set to `CTRL_CEILING_INACTIVE` (+inf) and drop out of the
+min() by construction — a missing input can never *become* a permission.
+
+**2. The voltage min() — CV target selection.** The stage's CV target (profile
+`cv_target_vcell` in CHARGE, `rest_voltage_vcell` in REST, `limp_vcell` in Limp Home)
+is min()'d with the BMS **CVL** (`bms_cvl_vcell`, V/cell). §6.3: *"CVL below the
+profile CV target simply wins in the min(); the profile does not fight it."* A CVL
+**above** the profile target changes nothing — the comparison is one-directional by
+construction, not by a check that could be inverted. Voltage and power are separate
+domains: whichever demands the lower field effort governs the loop that tick.
+
+**3. Hard overrides that bypass both min()s.** These are not ceilings; they are stops.
+- **BMS pre-disconnect** (§6.3) → soft field ramp to zero **in every state**, applied
+  last in the tick so nothing computed earlier can re-energise the field. Load-dump
+  prevention by protocol.
+- **BMS protection alarm** → charge-current ceiling forced to 0 W. Latched while the
+  alarm signal is stale: alarm-then-silence is the signature of a BMS acting on its
+  own alarm, not of the alarm clearing.
+- **Fault ladder** (§7) — CRITICAL opens the field outright; LIMP-class faults swap in
+  the Limp Home caps.
+- **Stationary-rotor gate** (§5.2) — no rotation detected, field held to the pulsed
+  detect budget.
+- **Rotor duty clamp** (§5.1) — a hard bound on field *duty* derived from the field
+  supply voltage, beneath everything above. On this install it is the binding
+  protection most of the time, and nothing on the CAN bus can widen it.
+
+**4. Loss of signal is a declared state, never a silent one.** If a source that was
+present goes silent, its ceilings revert to inactive — the regulator falls back to its
+own profile and hardware limits and raises `CTRL_FAULT_LOST_BMS` (LIMP-class). It does
+**not** keep enforcing the last value it heard (stale data is not truth), and it does
+**not** free-run. Note the asymmetry with a source that was *never* present: no BMS
+wired is a legitimate configuration, not a fault. *(Open: a `bms_required` config flag
+so an install that depends on a BMS can distinguish "dead at power-on" from "none
+fitted" — today those read alike. Tracked on deliverable #10.)*
+
+#### What "DVCC" does and does not mean here `[SPEC-GAP]`
+
+DVCC is Victron's *system-level* charge-control scheme: a GX device aggregates a
+managed battery's limits (plus any user-set limits and SVS/SCS behaviour) and
+distributes them to **Victron** charge sources over VE.Can / VE.Bus / VE.Direct.
+There is no standard mechanism by which a GX pushes DVCC limits to a **third-party**
+device on the wire, and this regulator is a third-party device.
+
+What is implemented (deliverable #10) is the **CAN-BMS frame set** — `0x351` CVL/CCL/
+DCL, `0x355` SOC/SOH, `0x356` V/I/T, `0x35A` alarms, `0x35C` charge-enable — i.e. what
+a managed battery *broadcasts*. On a shared bus this covers the common case well: the
+regulator honours the same battery-authored limits the GX itself is consuming, without
+needing a GX at all.
+
+The gap is real and worth stating plainly: **limits that originate in the GX rather
+than in the battery do not reach us.** A charge-current limit typed into the GX UI, or
+a DVCC value the GX computes or overrides, is invisible to this regulator. In such an
+install the battery's own broadcast still binds us, but the *system* limit may be
+lower than what we enforce. Closing this needs either a Victron-specific Rx driver or
+an explicit commissioning rule; until then, set install limits on the regulator too
+rather than relying on the GX to hold it back. Tracked as `TODO(GH#10)`.
+
 ---
 
 ## 3. RPM subsystem (optional)

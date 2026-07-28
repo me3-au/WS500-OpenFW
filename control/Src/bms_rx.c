@@ -90,15 +90,32 @@ static void decode_35a(bms_rx_t *b, const uint8_t *d)
     b->warning_active = (d[2] != 0u) || (d[3] != 0u);
 }
 
+/* 0x35C Charge/Discharge enable: byte[0] bit 0 = charge enable, bit 1 =
+ * discharge enable (not decoded -- no discharge path, same "not this
+ * regulator's business" reasoning 0x351's DCL field documents). [SPEC-SIGNOFF]
+ * / bench-pending, same standing as every other layout in this file (bms_rx.h
+ * file header): bit position reconstructed from the same public CAN-BMS/
+ * Victron-compatible documentation, no vendor datasheet in-tree to verify
+ * against byte-for-byte. Requires 1 byte; some vendor variants send up to 8
+ * with additional immediate-charge/discharge flags this driver does not
+ * need. */
+static void decode_35c(bms_rx_t *b, const uint8_t *d)
+{
+    b->charge_enabled = (d[0] & 0x01u) != 0u;
+}
+
 /* ---- public API (contract: bms_rx.h) ------------------------------------ */
 
 void bms_rx_init(bms_rx_t *b)
 {
     bms_rx_t z;
     if (!b) return;
-    memset(&z, 0, sizeof z);   /* .limits/.soc/.status/.alarm -> state=NEVER
-                               * (enum 0), last_rx_ms=0: no BMS wired reads
-                               * as NEVER, not a fault (bms_rx.h) */
+    memset(&z, 0, sizeof z);   /* .limits/.soc/.status/.alarm/.enable ->
+                               * state=NEVER (enum 0), last_rx_ms=0: no BMS
+                               * wired reads as NEVER, not a fault (bms_rx.h).
+                               * charge_enabled=false from this memset is
+                               * inert -- see bms_rx_t's doc comment on that
+                               * field. */
     z.cvl_v       = NAN;
     z.ccl_a       = NAN;
     z.dcl_a       = NAN;
@@ -136,6 +153,11 @@ void bms_rx_frame(bms_rx_t *b, uint32_t now_ms, uint32_t id,
         decode_35a(b, data);
         sig_mark_fresh(&b->alarm, now_ms);
         break;
+    case BMS_RX_ID_ENABLE:
+        if (len < 1u) return;
+        decode_35c(b, data);
+        sig_mark_fresh(&b->enable, now_ms);
+        break;
     default:
         return;   /* not a frame this driver decodes */
     }
@@ -161,17 +183,19 @@ static float ccl_to_watts(float ccl_a, float vbat_pack_v)
 void bms_rx_snapshot(bms_rx_t *b, uint32_t now_ms, float vbat_pack_v,
                      bms_snapshot_t *out)
 {
-    bool limits_fresh, soc_fresh, alarm_fresh;
+    bool limits_fresh, soc_fresh, alarm_fresh, enable_fresh;
     if (!b || !out) return;
 
     sig_age(&b->limits, now_ms);
     sig_age(&b->soc,    now_ms);
     sig_age(&b->status, now_ms);
     sig_age(&b->alarm,  now_ms);
+    sig_age(&b->enable, now_ms);
 
     limits_fresh = (b->limits.state == BMS_SIG_FRESH);
     soc_fresh    = (b->soc.state    == BMS_SIG_FRESH);
     alarm_fresh  = (b->alarm.state  == BMS_SIG_FRESH);
+    enable_fresh = (b->enable.state == BMS_SIG_FRESH);
 
     /* CCL ceiling + CVL: only from a FRESH limits signal. Staleness (or
      * never-seen) falls back to CTRL_CEILING_INACTIVE / NAN — i.e. "this
@@ -241,14 +265,38 @@ void bms_rx_snapshot(bms_rx_t *b, uint32_t now_ms, float vbat_pack_v,
         out->soc_trusted = soc_sane;
     }
 
-    out->pre_disconnect = false;   /* TODO(GH#10) [SPEC-GAP]: bms_rx.h */
+    /* deliverable #10: pre_disconnect from 0x35C's charge-enable bit
+     * deasserting -- see bms_rx.h's file header for why this is the honest
+     * source in this frame family. */
+    out->pre_disconnect = enable_fresh && !b->charge_enabled;
 
-    /* "Lost" = the safety-relevant signal group (limits and/or alarm) WAS
-     * fresh and has now gone silent — never true merely because no BMS is
-     * wired at all (bms_sig_state_t's NEVER vs STALE distinction, bms_rx.h).
-     * SOC/status staleness alone does not set this: each already degrades
-     * on its own (soc_trusted=false above) without needing a whole-system
-     * LIMP disposition. */
+    /* PRE-DISCONNECT-THEN-SILENCE LATCH -- same reasoning as the
+     * ALARM-THEN-SILENCE latch above, applied to the ENABLE signal
+     * specifically: if the last 0x35C we heard said "charge disabled" and the
+     * ENABLE signal has since gone STALE, keep reporting pre_disconnect until
+     * a fresh 0x35C actually re-asserts charge-enable. A BMS that deasserts
+     * charge-enable and then stops transmitting is the signature of the
+     * disconnect actually happening (it may be opening its own contactor and
+     * losing its own supply), not of the warning clearing.
+     *
+     * Deliberately NOT triggered by ordinary comms loss: a signal that was
+     * NEVER fresh (no BMS wired, or this frame simply isn't sent), or one
+     * that was last fresh with charge_enabled=true before going stale, does
+     * NOT synthesize a pre-disconnect here -- that is plain silence, and its
+     * declared, already-reviewed fallback is `lost` below -> ext_faults ->
+     * CTRL_FAULT_LOST_BMS -> LIMP. This driver does not invent a harder
+     * response than the spec assigns to ordinary comms loss; it only latches
+     * the specific case where the last thing the BMS said was "stop". */
+    if (!enable_fresh && b->enable.state == BMS_SIG_STALE && !b->charge_enabled)
+        out->pre_disconnect = true;
+
+    /* "Lost" = the safety-relevant signal group (limits, alarm, and/or
+     * enable) WAS fresh and has now gone silent — never true merely because
+     * no BMS is wired at all (bms_sig_state_t's NEVER vs STALE distinction,
+     * bms_rx.h). SOC/status staleness alone does not set this: each already
+     * degrades on its own (soc_trusted=false above) without needing a
+     * whole-system LIMP disposition. */
     out->lost = (b->limits.state == BMS_SIG_STALE) ||
+               (b->enable.state  == BMS_SIG_STALE) ||
                (b->alarm.state  == BMS_SIG_STALE);
 }

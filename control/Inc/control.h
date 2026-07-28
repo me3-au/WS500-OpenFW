@@ -48,6 +48,15 @@ typedef enum {
     CTRL_BIND_NONE = 0,
     CTRL_BIND_STAGE,          /* profile power (max_charge_power_w / rest cap) */
     CTRL_BIND_VOLTAGE_CLAMP,  /* CV target reached — the old "absorption" */
+    CTRL_BIND_BMS_CVL,        /* deliverable #10: BMS CVL below the profile's own
+                              * CV target is what the effort loop is actually
+                              * regulating to (PROFILE_SPEC_LFP.md §6/§8.1) —
+                              * telemetered distinctly from CTRL_BIND_VOLTAGE_CLAMP
+                              * so "why is my voltage capped" doesn't get
+                              * flattened into one bucket; n2k_encode.c /
+                              * rvc_encode.c deliberately still report this as
+                              * the same external "absorption" op-state, since
+                              * from the GX/RV-C display's point of view it is */
     CTRL_BIND_THERMAL,        /* predictive thermal governor (§4) */
     CTRL_BIND_BMS,            /* BMS CCL / DVCC CCL (§6.3) */
     CTRL_BIND_BATTERY_C,      /* battery C-rate limit (§2.1) */
@@ -58,6 +67,10 @@ typedef enum {
     CTRL_BIND_ENGINE,         /* engine white-space budget (§3.5, optional) */
     CTRL_BIND_USER_CAP,       /* manual cap / quiet mode */
     CTRL_BIND_ROTOR_CLAMP,    /* field-effort clamped at duty_max (§5.1) */
+    CTRL_BIND_BMS_PREDISCONNECT, /* deliverable #10: BMS pre-disconnect warning
+                              * soft-ramping effort to zero, regardless of
+                              * state (PROFILE_SPEC_LFP.md §6/§8.1,
+                              * CONTROL_SPEC_NEXTGEN.md §6.3) */
     CTRL_BIND_RUN_DETECT      /* stationary rotor — field held to the §5.2 detect budget */
 } ctrl_bind_src_t;
 
@@ -123,11 +136,26 @@ typedef struct {
     bool  ignition;        /* enable/wake input */
     bool  feature_in;      /* the single assignable Feature-IN, function-resolved */
 
+    /* deliverable #10 (PROFILE_SPEC_LFP.md §6/§8.1, CONTROL_SPEC_NEXTGEN.md
+     * §6.3): "A BMS pre-disconnect warning triggers soft ramp regardless of
+     * state." Dialect-neutral by construction (bms_snapshot_t.pre_disconnect,
+     * CAN_INTEGRATION.md §1) — a Victron-GX or RV-C source can drive this the
+     * same way once wired, with no change here. false = no warning asserted
+     * (the ordinary, no-BMS-wired, and BMS-comms-lost cases all read false —
+     * comms loss has its own declared fallback via ext_faults/
+     * CTRL_FAULT_LOST_BMS -> LIMP, a softer disposition than this feature's
+     * unconditional ramp-to-zero; see bms_rx.c's pre-disconnect-then-silence
+     * latch for why plain silence does not, by itself, synthesize this). */
+    bool  pre_disconnect;
+
     uint32_t ext_faults;   /* faults detected by other modules (BMS loss, shunt
                             * implausible, …), OR'd in by the app (ctrl_fault_bits_t) */
 } ctrl_measured_t;
 
-/* ---- Arbitration ceilings (Watts; INACTIVE = +inf) ------------------------ */
+/* ---- Arbitration ceilings (Watts; INACTIVE = +inf) ------------------------ *
+ * ONE exception to the "Watts" rule: bms_cvl_vcell below, which is a
+ * voltage-domain (V/cell) ceiling — see its own comment for why it lives here
+ * rather than in ctrl_arbitrate()'s Watts min(). */
 typedef struct {
     float thermal_w;       /* §4 governor output */
     float bms_ccl_w;       /* §6.3 */
@@ -138,6 +166,31 @@ typedef struct {
     float belt_w;          /* §2.2, optional */
     float engine_w;        /* §3.5 white-space, optional */
     float user_cap_w;      /* §2 item 7 */
+
+    /* deliverable #10 (PROFILE_SPEC_LFP.md §6: "CVL below the profile CV
+     * target simply wins in the min(); the profile does not fight it").
+     * V/CELL, NOT Watts — this is the one field in this struct in the
+     * voltage domain, because the CV clamp it feeds (control.c's cv_vcell
+     * selection) is itself a per-cell voltage, and converting it to a Watts
+     * ceiling here would need a second voltage (to turn V into W) that isn't
+     * this struct's business. NAN = inactive/absent/stale, matching
+     * bms_snapshot_t.cvl_v's own convention (bms_rx.h) exactly so no
+     * NAN<->+inf translation step exists to get backwards — control.c's
+     * `ceil->bms_cvl_vcell < cv_vcell` min() is false for NAN by the same
+     * IEEE-754 idiom arbitration.c already documents ("< is false for +inf
+     * and for NaN"), so this can only ever LOWER the effective CV target,
+     * never raise it, by construction.
+     *
+     * UNIT OWNERSHIP: this field is per-cell. The BMS frame (bms_rx.c 0x351)
+     * reports pack volts (bms_snapshot_t.cvl_v); the caller that assembles
+     * this struct (Core/Src/main.c, sim/sil.c) owns the ONE pack->cell
+     * division, via ctrl_cell_from_pack(cvl_v, cells_series) below — nowhere
+     * else in the tree divides by cells_series for this value. Getting that
+     * conversion backwards (feeding pack volts in directly) would clamp the
+     * per-cell CV target near the FULL PACK voltage instead of one cell's
+     * share of it — on this 16S install that reads as "never clamp,
+     * effectively" (16x too permissive), the unsafe direction. */
+    float bms_cvl_vcell;
 } ctrl_ceilings_t;
 
 /* ---- Resolved active profile + globals (V/cell) --------------------------- *
@@ -241,6 +294,20 @@ typedef struct {
 
     ctrl_vsup_guard_t     vsup;          /* §5.1 clamp-voltage plausibility */
     uint32_t              run_probe_ms;  /* §5.2 detect-budget pulse phase */
+
+    /* deliverable #10 (PROFILE_SPEC_LFP.md §6/§8.1): ceiling on field_effort
+     * while a BMS pre-disconnect warning is asserted, in [0,1]. 1.0 = inactive
+     * (no ceiling). Ramps down at CTRL_PREDISC_RAMP_S once asserted and holds
+     * at 0 for as long as it stays asserted; reset to 1.0 the instant it
+     * clears — release is then governed by the ORDINARY ramp_w_per_s
+     * soft-start (control.c resets cmd_power_w to 0 while this is active,
+     * the same idiom the §5.2 run-detect gate already uses for its own
+     * resume), not by a second ramp invented here. See control.c's ctrl_tick
+     * for where this is applied — deliberately the LAST thing to touch
+     * effort each tick, so nothing computed earlier (arbitration, CV clamp,
+     * run-detect budget, state transitions) can re-energise the field out
+     * from under it. */
+    float                 pre_disc_ramp;
 } ctrl_t;
 
 /* ---- API ------------------------------------------------------------------ */
@@ -264,6 +331,11 @@ void ctrl_init(ctrl_t *c);
  *      arbitrated power = min(active ceilings); effort follows the lower demand;
  *      ramp UP via ramp_w_per_s, DOWN immediate (§3.5). Report binding source.
  *   5. Degraded-but-recoverable faults → Limp Home (FLOAT @ v_limp), not field-off.
+ *   6. BMS CVL (ceil->bms_cvl_vcell) min()'d into cv_vcell wherever it is
+ *      selected — lowers the effective CV target, never raises it. BMS
+ *      pre-disconnect (m->pre_disconnect) ramps field_effort to zero over
+ *      CTRL_PREDISC_RAMP_S and holds it there, unconditionally, in every
+ *      state (deliverable #10, PROFILE_SPEC_LFP.md §6/§8.1).
  */
 ctrl_command_t ctrl_tick(ctrl_t *c,
                          const ctrl_measured_t *m,

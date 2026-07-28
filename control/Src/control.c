@@ -44,6 +44,22 @@
 #define KV_PER_VOLT_S      2.0f      /* == 0.02/tick at the 10 ms design rate */
 #define KP_PER_WATT_S      1.0e-3f   /* == 1e-5/tick at 10 ms (was 5e-5/tick) */
 
+/* [SPEC-SIGNOFF] deliverable #10 (PROFILE_SPEC_LFP.md §6/§8.1,
+ * CONTROL_SPEC_NEXTGEN.md §6.3): time for the BMS pre-disconnect soft ramp to
+ * take field_effort from 1.0 to 0.0. The spec mandates "before the contactor
+ * opens" and "a soft ramp" but gives no number. 0.3 s is an engineering
+ * choice, not a verified BMS lead time (no vendor datasheet is in-tree for
+ * this frame family — bms_rx.h's own bench-pending disclaimer applies here
+ * too): it is chosen to sit comfortably inside the general run of BMS
+ * pre-disconnect warning lead times reported for this protocol family (order
+ * of ~1 s or more), while still spanning many control ticks (30 @ the 10 ms
+ * design rate) so it is genuinely a ramp and not a single-tick step — a step
+ * is exactly what the load-dump TVS already covers; this feature exists so
+ * charging can stop WITHOUT needing that hardware backstop. Confirm against
+ * a real BMS's actual warning lead time before trusting this margin on a
+ * live pack. */
+#define CTRL_PREDISC_RAMP_S   0.3f
+
 static float ema(float prev, float x, float tau_s, float dt_s)
 {
     if (isnan(prev) || tau_s <= 0.0f) return x;   /* seed on first sample */
@@ -119,6 +135,7 @@ void ctrl_init(ctrl_t *c)
     c->vclamp_hold_ms = 0;
     ctrl_vsup_guard_init(&c->vsup);
     c->run_probe_ms = 0;
+    c->pre_disc_ramp = 1.0f;   /* inactive -- no BMS pre-disconnect ceiling yet */
 }
 
 ctrl_command_t ctrl_tick(ctrl_t *c,
@@ -264,6 +281,19 @@ ctrl_command_t ctrl_tick(ctrl_t *c,
         else if (limp)                  { stage_w = g->limp_power_cap_w;    cv_vcell = g->limp_vcell; }
         else                            { stage_w = prof->rest_power_cap_w; cv_vcell = prof->rest_voltage_vcell; }
 
+        /* deliverable #10 (PROFILE_SPEC_LFP.md §6: "CVL below the profile CV
+         * target simply wins in the min(); the profile does not fight it").
+         * `<` is false for NaN, so an inactive/stale/absent BMS CVL
+         * (ceil->bms_cvl_vcell == NAN, ctrl_ceilings_t's own documented
+         * convention) drops out by construction and cv_vcell is left exactly
+         * as the stage picked it above -- same NaN-safe idiom
+         * arbitration.c's min() already uses. Applied unconditionally across
+         * all three stages (BULK/limp/rest), not just BULK: a lower CVL can
+         * only ever LOWER whichever target was already selected, so there is
+         * no stage where honoring it could raise anything. */
+        bool cv_from_bms = false;
+        if (ceil->bms_cvl_vcell < cv_vcell) { cv_vcell = ceil->bms_cvl_vcell; cv_from_bms = true; }
+
         const ctrl_arb_t arb = ctrl_arbitrate(stage_w, ceil);
 
         /* Ramp commanded power UP; DOWN is immediate (§3.5 asymmetry). */
@@ -282,8 +312,20 @@ ctrl_command_t ctrl_tick(ctrl_t *c,
         const float e_from_v = effort + KV_PER_VOLT_S * v_err * dt_s;
         const float e_from_p = effort + KP_PER_WATT_S * p_err * dt_s;
 
-        if (e_from_v <= e_from_p) { effort = e_from_v; bind = CTRL_BIND_VOLTAGE_CLAMP; bind_w = m->watts_batt; }
-        else                      { effort = e_from_p; bind = arb.src;                 bind_w = arb.watts; }
+        if (e_from_v <= e_from_p) {
+            effort = e_from_v;
+            /* Telemetry: distinguish "clamped to the profile's own CV target"
+             * from "clamped to a lower BMS CVL" -- both are the same effort
+             * behavior (the voltage loop governs), but the reason a user
+             * would want to see is different. See CTRL_BIND_BMS_CVL's doc
+             * comment (control.h) for why this is a separate bind value
+             * instead of overloading CTRL_BIND_BMS (the Watts-domain BMS CCL
+             * bind) or silently folding into CTRL_BIND_VOLTAGE_CLAMP. */
+            bind = cv_from_bms ? CTRL_BIND_BMS_CVL : CTRL_BIND_VOLTAGE_CLAMP;
+            bind_w = m->watts_batt;
+        } else {
+            effort = e_from_p; bind = arb.src; bind_w = arb.watts;
+        }
 
         /* [SIL-found 2026-07] A NaN measurement (e.g. shunt dropout → watts_batt
          * = NaN) must never reach the PWM, and must not latch: NaN passed both
@@ -309,6 +351,41 @@ ctrl_command_t ctrl_tick(ctrl_t *c,
         c->cmd_power_w = 0.0f;
     } else {
         c->run_probe_ms = 0;
+    }
+
+    /* ---- deliverable #10: BMS pre-disconnect -- unconditional soft ramp to
+     * zero ---- *
+     * PROFILE_SPEC_LFP.md §6/§8.1, CONTROL_SPEC_NEXTGEN.md §6.3: "A BMS
+     * pre-disconnect warning triggers soft ramp regardless of state" /
+     * "...before the contactor opens -- load-dump prevention by protocol,
+     * not just TVS."
+     *
+     * Deliberately the LAST thing applied to `effort` this tick -- after
+     * arbitration, the CV clamp, and the §5.2 run-detect gate above -- so it
+     * is a hard ceiling nothing computed earlier can re-energise the field
+     * out from under: STANDBY, LIMP, a fault-driven state, and the run-detect
+     * budget can all only ever produce an effort THIS clamps further down,
+     * never one that escapes it. field_open is deliberately left untouched:
+     * that is the separate, harder hardware-cutoff path (BKIN/MOE) reserved
+     * for CRITICAL faults (§7) -- a graceful ramp is the entire point of this
+     * feature, and forcing field_open here would make it a step, which is
+     * exactly what the load-dump TVS already covers.
+     *
+     * cmd_power_w is reset to 0 for the same reason the run-detect gate
+     * resets it above: so that when the warning clears, the ORDINARY
+     * ramp_w_per_s soft-start (this function, above) governs the resume from
+     * zero -- no second, separately-tuned up-ramp is invented for release. */
+    if (m->pre_disconnect) {
+        c->pre_disc_ramp -= dt_s / CTRL_PREDISC_RAMP_S;
+        if (c->pre_disc_ramp < 0.0f) c->pre_disc_ramp = 0.0f;
+        if (effort > c->pre_disc_ramp) {
+            effort = c->pre_disc_ramp;
+            bind   = CTRL_BIND_BMS_PREDISCONNECT;
+            bind_w = 0.0f;
+        }
+        c->cmd_power_w = 0.0f;
+    } else {
+        c->pre_disc_ramp = 1.0f;   /* released -- no ceiling; resume ramps via cmd_power_w */
     }
 
     c->effort = effort;

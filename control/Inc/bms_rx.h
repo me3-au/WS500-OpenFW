@@ -15,10 +15,11 @@
  * This file is that interface (bms_snapshot_t) plus ONE vendor driver: the
  * widely-deployed "CAN-BMS" / Victron-compatible frame set that REC, JK and
  * others emit (CAN_INTEGRATION.md §8.1 rows 5–6) — 0x351 (CVL/CCL/DCL), 0x355
- * (SOC/SOH), 0x356 (pack V/I/T), 0x35A (alarms/warnings). These are 11-bit
- * STANDARD CAN identifiers, unlike the 29-bit extended IDs the N2K/RV-C Tx
- * path uses (n2k_encode.h) — Core/Src/can_n2k.c's Rx path and filter banks
- * must admit standard-ID frames too, which is new as of this deliverable.
+ * (SOC/SOH), 0x356 (pack V/I/T), 0x35A (alarms/warnings), 0x35C
+ * (charge/discharge-enable). These are 11-bit STANDARD CAN identifiers,
+ * unlike the 29-bit extended IDs the N2K/RV-C Tx path uses (n2k_encode.h) —
+ * Core/Src/can_n2k.c's Rx path and filter banks must admit standard-ID frames
+ * too, which is new as of this deliverable.
  *
  * [SPEC-SIGNOFF] / bench-pending: the byte layout and scale factors below are
  * reconstructed from the widely-implemented public documentation of this
@@ -34,36 +35,32 @@
  * family across vendors, and this driver does not need to know WHICH alarm
  * fired to know the safe response (force the CCL ceiling to 0 W).
  *
- * [SPEC-GAP] CVL (charge-voltage limit) is decoded and exposed on
- * bms_snapshot_t (the §1 interface requires it), but has NO consumer in the
- * control core today: ctrl_ceilings_t (control.h) is Watts-only — there is no
- * voltage-domain ceiling in the arbitration min() (arbitration.c) — and the
- * only voltage-domain CV target the engine reads is
- * ctrl_profile_t.cv_target_vcell, a fixed config value with no
- * externally-supplied override input anywhere in control.c (confirmed by
- * inspection: cv_target_vcell is read in control.c, never written from
- * outside config_get()). PROFILE_SPEC_LFP.md §6 says plainly "CVL below the
- * profile CV target simply wins in the min()" — that min() does not exist in
- * code yet. Per this deliverable's scope ("do NOT modify control/ core
- * control logic to accommodate this"), this driver decodes and exposes CVL
- * correctly and stops there; wiring it in needs a control-core change (e.g. a
- * new ctrl_ceilings_t.bms_cvl_vcell field, min()'d against cv_target_vcell
- * inside control.c's CV clamp) that is out of this file's scope and needs its
- * own review. See the deliverable report for the fix shape this suggests.
+ * CVL (charge-voltage limit) is decoded and exposed on bms_snapshot_t (the §1
+ * interface requires it) and, as of this deliverable, has a real consumer:
+ * ctrl_ceilings_t.bms_cvl_vcell (control.h) is min()'d against the profile CV
+ * target inside control.c's CV clamp, per PROFILE_SPEC_LFP.md §6 ("CVL below
+ * the profile CV target simply wins in the min()"). This driver's own
+ * contract is unchanged by that: it still just decodes 0x351 and reports
+ * cvl_v in pack volts, NAN when the limits signal isn't fresh; the pack->cell
+ * conversion is owned by the caller that assembles ctrl_ceilings_t
+ * (Core/Src/main.c, sim/sil.c — see control.h's bms_cvl_vcell doc comment for
+ * exactly where and why).
  *
- * [SPEC-GAP] / TODO(GH#10): pre_disconnect is exposed on bms_snapshot_t (the
- * §1 interface requires it) but this driver always reports it false. No
- * verified bit for "BMS is about to open its contactor" exists within the
- * 0x351/0x355/0x356/0x35A frame set decoded here — CAN_INTEGRATION.md ties
- * pre-disconnect specifically to the Victron BMS row (Lynx Smart / VE.Bus via
- * GX, its own proprietary status frames), not to the REC/JK row this driver
- * implements, and guessing a bit position in 0x35A without a vendor doc to
- * check it against is exactly the kind of hardware-fact invention this
- * project's ground rules forbid. Once a verified source exists: the intended
- * consumer is a soft field ramp-down BEFORE the contactor opens
- * (CAN_INTEGRATION.md §3, PROFILE_SPEC_LFP.md §6) — that is field-drive-path
- * logic and needs its own safety review; this driver's job stops at exposing
- * the flag.
+ * pre_disconnect is exposed on bms_snapshot_t (the §1 interface requires it)
+ * and, as of this deliverable, is driven from 0x35C's charge-enable bit (byte
+ * 0, bit 0): this frame family's protocol-level "stop charging now" — a
+ * charge-enable bit deasserting is the honest source available here, absent
+ * a dedicated pre-disconnect bit anywhere in 0x351/0x355/0x356/0x35A.
+ * [SPEC-SIGNOFF] / bench-pending, same standing as every other byte layout in
+ * this file: bit position reconstructed from the same public CAN-BMS/
+ * Victron-compatible documentation, no vendor datasheet in-tree to verify
+ * against. The interface field itself stays dialect-neutral (a plain bool on
+ * bms_snapshot_t) so a Victron-GX BMS-status source or an RV-C source can
+ * drive the same field later without this struct changing again. The
+ * consumer is the soft field ramp-down in control.c's ctrl_tick (§7
+ * field-drive path — reviewed separately per this project's safety gate);
+ * this driver's job stops at exposing the flag, conservatively, per the
+ * staleness rule on bms_snapshot_t.pre_disconnect below.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -79,6 +76,7 @@
 #define BMS_RX_ID_SOC      0x355u   /* SOC / SOH */
 #define BMS_RX_ID_STATUS   0x356u   /* pack V / I / T (informational only) */
 #define BMS_RX_ID_ALARM    0x35Au   /* alarms / warnings */
+#define BMS_RX_ID_ENABLE   0x35Cu   /* charge/discharge-enable -- pre_disconnect source */
 
 /* Loss-of-signal timeout per tracked frame group. The 0x35x set is typically
  * broadcast at ~1 Hz by REC/JK-compatible BMS firmware; 3x that gives margin
@@ -116,6 +114,7 @@ typedef struct {
     bms_sig_t soc;      /* 0x355 SOC/SOH */
     bms_sig_t status;   /* 0x356 V/I/T */
     bms_sig_t alarm;    /* 0x35A alarms/warnings */
+    bms_sig_t enable;   /* 0x35C charge/discharge-enable */
 
     /* Last-decoded raw values, held between frames so a fresher OTHER
      * signal's snapshot poll doesn't blank out a still-valid one. NAN =
@@ -137,6 +136,11 @@ typedef struct {
     float    pack_temp_c;    /* 0x356, informational only */
     bool     alarm_active;   /* 0x35A bytes[0:1]: >=1 protection-level bit set */
     bool     warning_active; /* 0x35A bytes[2:3]: >=1 pre-alarm bit set */
+    bool     charge_enabled; /* 0x35C byte[0] bit 0. Meaningless until
+                              * .enable.state != BMS_SIG_NEVER -- every
+                              * consumer below gates on that first, so the
+                              * memset(0)-provided false at bms_rx_init() is
+                              * inert, not a claimed reading. */
 } bms_rx_t;
 
 /* The single dialect-neutral interface (CAN_INTEGRATION.md §1). Every vendor
@@ -168,11 +172,23 @@ typedef struct {
                               * a second thing to act on */
     bool     warning_active; /* BMS-reported pre-alarm warning (any bit);
                               * informational only, does not affect ccl_w */
-    bool     pre_disconnect; /* TODO(GH#10) [SPEC-GAP]: always false today —
-                              * see this file's header */
+    bool     pre_disconnect; /* deliverable #10: driven by 0x35C's
+                              * charge-enable bit deasserting (see this
+                              * file's header and bms_rx.c's decode). Latches
+                              * true across the ENABLE signal's own staleness
+                              * if the last fresh frame said "disabled" —
+                              * same reasoning as the alarm-then-silence latch
+                              * below: a BMS that deasserts charge-enable and
+                              * then stops transmitting is the signature of
+                              * the disconnect actually happening. Ordinary
+                              * comms loss (never asserted, then stale) does
+                              * NOT synthesize this on its own — that is the
+                              * separate, already-reviewed `lost` disposition
+                              * below (-> LIMP), not this feature's harder
+                              * ramp-to-zero. */
     bool     lost;           /* true = the safety-relevant signal group
-                              * (limits and/or alarm) WAS fresh and has now
-                              * gone stale — caller must OR
+                              * (limits, alarm, and/or enable) WAS fresh and
+                              * has now gone stale — caller must OR
                               * CTRL_FAULT_LOST_BMS into ext_faults. Never
                               * true merely because no BMS is wired at all
                               * (BMS_SIG_NEVER, not BMS_SIG_STALE) — see

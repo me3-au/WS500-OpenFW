@@ -15,9 +15,10 @@
  *     EXISTING ext_faults bits, so nothing in control/ has to change.
  *   - deliverable #10 (CAN_INTEGRATION.md §1): pulling the BMS/DVCC snapshot
  *     (can_n2k_bms_snapshot()) and feeding its ceiling/SOC/loss-of-signal
- *     fields into the existing ctrl_ceilings_t.bms_ccl_w /
- *     ctrl_measured_t.soc_* / ext_faults inputs — again, nothing in
- *     control/ changes to accommodate it.
+ *     fields into ctrl_ceilings_t.bms_ccl_w / bms_cvl_vcell,
+ *     ctrl_measured_t.soc_* / pre_disconnect, and ext_faults. bms_cvl_vcell
+ *     is the ONE place bms.cvl_v (pack volts) is converted to per-cell —
+ *     see the ceil literal below and control.h's doc comment on that field.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -221,6 +222,12 @@ int main(void)
                  * (or a second, still-unidentified pin) resolves the split. */
                 .ignition     = dio_ctrl_in(),
                 .feature_in   = false,                  /* TODO: same PB13 ambiguity above */
+                /* deliverable #10 (PROFILE_SPEC_LFP.md §6/§8.1): 0x35C
+                 * charge-enable deasserting, dialect-neutral on
+                 * bms_snapshot_t -- see bms_rx.h/control.h for the
+                 * conservative staleness latch this already carries. Drives
+                 * ctrl_tick()'s unconditional soft ramp to zero. */
+                .pre_disconnect = bms.pre_disconnect,
                 /* §7 R1/R6 escalations, mapped onto the engine's own fault
                  * bits (app_ext_faults above) -- now including deliverable
                  * #10's per-frame BMS-lost detection (bms.lost). */
@@ -232,6 +239,17 @@ int main(void)
              * with their subsystems.) */
             ctrl_ceilings_t ceil = {
                 .thermal_w = CTRL_CEILING_INACTIVE, .bms_ccl_w = bms.ccl_w,
+                /* deliverable #10 (PROFILE_SPEC_LFP.md §6): the ONE place
+                 * bms.cvl_v (pack volts, bms_rx.h) is converted to per-cell --
+                 * ctrl_cell_from_pack() returns NAN for cells_series==0 and
+                 * NAN in -> NAN out, so a stale/absent CVL (already NAN from
+                 * bms_rx.c) or a misconfigured cell count both drop the
+                 * ceiling out inactive rather than risk the reverse (pack
+                 * volts read as per-cell) error, which would be
+                 * cells_series-times too permissive -- the unsafe direction
+                 * on this 16S install. See control.h's bms_cvl_vcell doc
+                 * comment for the full unit-ownership statement. */
+                .bms_cvl_vcell = ctrl_cell_from_pack(bms.cvl_v, g.cells_series),
                 .battery_c_w = CTRL_CEILING_INACTIVE, .wiring_w = CTRL_CEILING_INACTIVE,
                 .alt_absolute_w = CTRL_CEILING_INACTIVE, .alt_capability_w = CTRL_CEILING_INACTIVE,
                 .belt_w = CTRL_CEILING_INACTIVE, .engine_w = CTRL_CEILING_INACTIVE,

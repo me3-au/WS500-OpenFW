@@ -209,6 +209,14 @@ static void test_127750(void)
     t.binding = CTRL_BIND_VOLTAGE_CLAMP;
     CHECK(n2k_encode_127750(&t, 1, 7, 0x23, &fr) == 1);
     CHECK(fr.data[2] == 4 && (fr.data[3] & 0x3) == 0);  /* temp ok again */
+
+    /* deliverable #10: a BMS-lowered CVL is the same "absorption" condition
+     * to the GX display -- BULK is still holding at a voltage clamp, just a
+     * lower one (control.h's CTRL_BIND_BMS_CVL doc comment). */
+    t.binding = CTRL_BIND_BMS_CVL;
+    CHECK(n2k_encode_127750(&t, 1, 7, 0x23, &fr) == 1);
+    CHECK(fr.data[2] == 4);
+
     t.state = CTRL_FLOAT; t.binding = CTRL_BIND_STAGE;
     CHECK(n2k_encode_127750(&t, 1, 7, 0x23, &fr) == 1);
     CHECK(fr.data[2] == 5);
@@ -331,13 +339,15 @@ static void test_prop_telemetry(void)
      *  mfg header = 2046 | 0x3<<11 | 4<<13 = 0x9FFE → FE 9F
      *  [SID 07][state BULK=01][reason 00][profile 02]
      *  effort 0.42 × 200 = 84 = 0x54
-     *  [binding THERMAL=03] binding_w 3000 = 0x0BB8 → B8 0B
+     *  [binding THERMAL=04] binding_w 3000 = 0x0BB8 → B8 0B
+     *    (THERMAL's ordinal shifted 3->4 when deliverable #10 inserted
+     *    CTRL_BIND_BMS_CVL ahead of it in ctrl_bind_src_t, control.h)
      *  alt 88 °C → 36115 = 0x8D13 → 13 8D; batt 22 °C → 0x734B → 4B 73
      *  rpm 1500/0.25 = 6000 = 0x1770 → 70 17; [rpm_state 00]
      *  faults SELF_OVERTEMP = 0x10 → 10 00 00 00; [severity WARN=01]
      * 22 B → 4 frames; PGN 130816 = 0x1FF00, prio 6 → id 0x19FF0023. */
     const uint8_t f0[8] = { 0xA0, 0x16, 0xFE, 0x9F, 0x07, 0x01, 0x00, 0x02 };
-    const uint8_t f1[8] = { 0xA1, 0x54, 0x03, 0xB8, 0x0B, 0x13, 0x8D, 0x4B };
+    const uint8_t f1[8] = { 0xA1, 0x54, 0x04, 0xB8, 0x0B, 0x13, 0x8D, 0x4B };
     const uint8_t f2[8] = { 0xA2, 0x73, 0x70, 0x17, 0x00, 0x10, 0x00, 0x00 };
     const uint8_t f3[8] = { 0xA3, 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
     CHECK(n2k_encode_prop_telemetry(&t, 7, 0x23, 5, fr, 8) == 4);

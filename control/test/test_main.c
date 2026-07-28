@@ -21,6 +21,7 @@ void test_n2k_sched(void);  /* NMEA2000 Tx cadence engine (GH#18) */
 void test_rvc_encode(void); /* RV-C DGN encoders (PROJECT_PLAN §1 row 10a) */
 void test_rvc_sched(void);  /* RV-C Tx cadence engine + RBM election (PROJECT_PLAN §1 row 10a) */
 void test_bms_rx(void);     /* BMS/DVCC control-in (deliverable #10, CAN_INTEGRATION.md §1) */
+void test_bms_ceilings(void); /* deliverable #10: CVL enforcement + pre-disconnect ramp (PROFILE_SPEC_LFP.md §6/§8.1) */
 void test_config(void);     /* packed config record: codec / slots / validator */
 void test_protocol(void);   /* JSON config wire: parser / §7 document / messages */
 void test_property(void);   /* §8.4 sweep-based invariant + boundary tests */
@@ -42,6 +43,7 @@ int main(void)
     test_rvc_encode();
     test_rvc_sched();
     test_bms_rx();
+    test_bms_ceilings();
     test_config();
     test_protocol();
     test_property();

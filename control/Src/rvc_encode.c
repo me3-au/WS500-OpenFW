@@ -104,12 +104,16 @@ static uint8_t enc_temp_u8_off40(float c)
  * equalize, 6 float, 7 constant voltage/current). RV-C's enum has no
  * distinct "fault" code, so a fault-severity reading maps to "do not
  * charge" (1) — the closest honest state, matching what the field driver
- * actually does on a fault (field open / limp). */
+ * actually does on a fault (field open / limp). CTRL_BIND_BMS_CVL reads as
+ * "absorption" too, same reasoning as n2k_encode.c's 127750: it is still
+ * BULK holding at a voltage clamp, just a BMS-lowered one (deliverable #10).
+ */
 static uint8_t rvc_operating_state(const ctrl_telemetry_t *t)
 {
     if (t->severity >= CTRL_SEV_FAULT) return 1u;         /* do not charge */
     if (t->state == CTRL_BULK)
-        return (t->binding == CTRL_BIND_VOLTAGE_CLAMP) ? 3u : 2u; /* absorption/bulk */
+        return (t->binding == CTRL_BIND_VOLTAGE_CLAMP ||
+                t->binding == CTRL_BIND_BMS_CVL) ? 3u : 2u; /* absorption/bulk */
     if (t->state == CTRL_FLOAT) return 6u;                /* float */
     return 1u;                                            /* standby -> do not charge */
 }

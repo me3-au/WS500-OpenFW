@@ -198,7 +198,12 @@ int n2k_encode_127488(const ctrl_telemetry_t *t, uint8_t instance,
  * 4 absorption, 5 float. Mapping from the 3-state engine: BULK holding at
  * the CV clamp is what legacy chargers call "absorption", so we report 4
  * there — a Cerbo then shows the familiar bulk→absorption→float ladder even
- * though the engine itself has no absorption state (CONTROL_SPEC App. A). */
+ * though the engine itself has no absorption state (CONTROL_SPEC App. A).
+ * CTRL_BIND_BMS_CVL counts as the same "absorption" condition: it is BULK
+ * holding at a voltage clamp too, just one a BMS lowered below the profile's
+ * own target (deliverable #10, control.h) — the GX display has no business
+ * knowing that distinction, only the raw telemetered binding byte
+ * (n2k_encode_prop_telemetry) does. */
 int n2k_encode_127750(const ctrl_telemetry_t *t, uint8_t connection,
                       uint8_t sid, uint8_t src, n2k_frame_t *out)
 {
@@ -208,7 +213,8 @@ int n2k_encode_127750(const ctrl_telemetry_t *t, uint8_t connection,
 
     if (t->severity >= CTRL_SEV_FAULT)      op = 2u;    /* fault */
     else if (t->state == CTRL_BULK)
-        op = (t->binding == CTRL_BIND_VOLTAGE_CLAMP) ? 4u : 3u;
+        op = (t->binding == CTRL_BIND_VOLTAGE_CLAMP ||
+              t->binding == CTRL_BIND_BMS_CVL) ? 4u : 3u;
     else if (t->state == CTRL_FLOAT)        op = 5u;    /* float */
     else                                    op = 0u;    /* standby → off */
 

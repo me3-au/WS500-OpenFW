@@ -19,6 +19,7 @@ void scn_plant_calibration(void);
 void scn_charge_rest_cycle(void);
 void scn_rotor_clamp(void);
 void scn_bms_steps(void);
+void scn_bms_cvl_predisconnect(void);
 void scn_rpm_transients(void);
 void scn_temperature(void);
 void scn_sensor_faults(void);
@@ -37,6 +38,7 @@ int main(void)
     scn_charge_rest_cycle();
     scn_rotor_clamp();
     scn_bms_steps();
+    scn_bms_cvl_predisconnect();
     scn_rpm_transients();
     scn_temperature();
     scn_sensor_faults();

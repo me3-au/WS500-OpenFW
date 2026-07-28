@@ -3,8 +3,9 @@
  * §1/§3): CAN-BMS/REC/JK frame decode against golden byte patterns, sign/
  * scale handling, per-signal staleness expiry, never-seen vs went-silent,
  * the Amps->Watts CCL conversion (including degenerate-voltage cases), alarm
- * mapping, pre-disconnect, malformed/short frames, and wraparound safety at
- * a late tick count.
+ * mapping, 0x35C charge-enable decode and the pre-disconnect-then-silence
+ * latch it drives, malformed/short frames, and wraparound safety at a late
+ * tick count.
  * SPDX-License-Identifier: MIT
  */
 #include "test.h"
@@ -385,10 +386,11 @@ static void test_degenerate_voltage(void)
     CHECK_FEQ(s.ccl_w, 1920.0, 1e-3);
 }
 
-/* pre_disconnect: no verified bit exists in the decoded frame set (bms_rx.h
- * [SPEC-GAP]) -- must always read false, not a guessed value, regardless of
- * how much other BMS traffic is flowing. */
-static void test_pre_disconnect_always_false(void)
+/* 0x35C charge/discharge-enable decode: byte[0] bit 0 = charge enable.
+ * Fresh + enabled -> pre_disconnect false; fresh + disabled -> true. Other
+ * BMS traffic flowing at the same time must not change the answer -- this
+ * driver's pre_disconnect is entirely 0x35C's business (bms_rx.h). */
+static void test_decode_35c_charge_enable(void)
 {
     bms_rx_t b;
     bms_snapshot_t s;
@@ -396,13 +398,116 @@ static void test_pre_disconnect_always_false(void)
 
     uint8_t limits[6] = {0x1C, 0x02, 0x90, 0x01, 0x00, 0x00};
     uint8_t soc[4]    = {0x4C, 0x00, 0x62, 0x00};
-    uint8_t alarm[4]  = {0x01, 0x00, 0x00, 0x00};
+    uint8_t alarm[4]  = {0x01, 0x00, 0x00, 0x00};   /* alarm set, unrelated */
     bms_rx_frame(&b, 0u, BMS_RX_ID_LIMITS, limits, sizeof limits);
     bms_rx_frame(&b, 0u, BMS_RX_ID_SOC, soc, sizeof soc);
     bms_rx_frame(&b, 0u, BMS_RX_ID_ALARM, alarm, sizeof alarm);
 
+    /* charge-enable bit set -> not pre-disconnecting. */
+    uint8_t en_on[1] = {0x01};
+    bms_rx_frame(&b, 0u, BMS_RX_ID_ENABLE, en_on, sizeof en_on);
+    CHECK(b.enable.state == BMS_SIG_FRESH);
+    CHECK(b.charge_enabled);
     bms_rx_snapshot(&b, 0u, 48.0f, &s);
     CHECK(!s.pre_disconnect);
+
+    /* charge-enable bit clear -> pre-disconnecting, immediately, on the very
+     * frame that clears it (no latency beyond normal freshness). */
+    uint8_t en_off[1] = {0x00};
+    bms_rx_frame(&b, 100u, BMS_RX_ID_ENABLE, en_off, sizeof en_off);
+    CHECK(!b.charge_enabled);
+    bms_rx_snapshot(&b, 100u, 48.0f, &s);
+    CHECK(s.pre_disconnect);
+
+    /* Bit 1 (discharge-enable) toggling alone must not affect charge-enable's
+     * own bit-0 reading -- this driver does not consume discharge-enable. */
+    uint8_t both[1] = {0x03};   /* charge + discharge both enabled */
+    bms_rx_frame(&b, 200u, BMS_RX_ID_ENABLE, both, sizeof both);
+    CHECK(b.charge_enabled);
+    bms_rx_snapshot(&b, 200u, 48.0f, &s);
+    CHECK(!s.pre_disconnect);
+}
+
+/* PRE-DISCONNECT-THEN-SILENCE LATCH: once a fresh 0x35C says "disabled" and
+ * the ENABLE signal itself has since gone stale, pre_disconnect must stay
+ * true until a fresh frame re-asserts charge-enable -- the same reasoning as
+ * the alarm-then-silence latch (bms_rx.c), applied to this signal. */
+static void test_pre_disconnect_latches_through_silence(void)
+{
+    bms_rx_t b;
+    bms_snapshot_t s;
+    bms_rx_init(&b);
+
+    uint8_t en_off[1] = {0x00};
+    bms_rx_frame(&b, 1000u, BMS_RX_ID_ENABLE, en_off, sizeof en_off);
+    bms_rx_snapshot(&b, 1000u, 48.0f, &s);
+    CHECK(s.pre_disconnect);
+
+    /* ENABLE signal goes stale. The pre-disconnect reading must survive it. */
+    bms_rx_snapshot(&b, 1000u + BMS_RX_SIGNAL_TIMEOUT_MS + 1u, 48.0f, &s);
+    CHECK(s.pre_disconnect);      /* latched, not released by the timeout */
+    CHECK(s.lost);                /* ENABLE staleness also raises `lost` */
+
+    /* Far later, still latched -- not a grace period. */
+    bms_rx_snapshot(&b, 1000u + 10u * BMS_RX_SIGNAL_TIMEOUT_MS, 48.0f, &s);
+    CHECK(s.pre_disconnect);
+
+    /* A live 0x35C re-asserting charge-enable is the only thing that clears
+     * it. */
+    uint8_t en_on[1] = {0x01};
+    bms_rx_frame(&b, 60000u, BMS_RX_ID_ENABLE, en_on, sizeof en_on);
+    bms_rx_snapshot(&b, 60000u, 48.0f, &s);
+    CHECK(!s.pre_disconnect);
+    CHECK(!s.lost);
+}
+
+/* Ordinary comms loss must NOT synthesize a pre-disconnect: if the last
+ * fresh 0x35C said "enabled" and the signal simply goes quiet (unplugged
+ * connector, bus issue, BMS reset -- nothing to do with an intentional
+ * disconnect warning), that is plain silence. Its declared fallback is
+ * `lost` -> CTRL_FAULT_LOST_BMS -> LIMP, NOT this feature's harder
+ * ramp-to-zero (bms_rx.h). */
+static void test_pre_disconnect_not_synthesized_from_plain_silence(void)
+{
+    bms_rx_t b;
+    bms_snapshot_t s;
+    bms_rx_init(&b);
+
+    uint8_t en_on[1] = {0x01};
+    bms_rx_frame(&b, 1000u, BMS_RX_ID_ENABLE, en_on, sizeof en_on);
+    bms_rx_snapshot(&b, 1000u, 48.0f, &s);
+    CHECK(!s.pre_disconnect);
+
+    bms_rx_snapshot(&b, 1000u + BMS_RX_SIGNAL_TIMEOUT_MS + 1u, 48.0f, &s);
+    CHECK(!s.pre_disconnect);     /* NOT latched -- last known state was fine */
+    CHECK(s.lost);                /* but comms loss is still flagged */
+}
+
+/* Never seen at all (no BMS wired, or a BMS that doesn't emit 0x35C): must
+ * read as "not pre-disconnecting", the same NEVER-vs-STALE distinction every
+ * other signal in this driver already makes. */
+static void test_pre_disconnect_never_seen(void)
+{
+    bms_rx_t b;
+    bms_snapshot_t s;
+    bms_rx_init(&b);
+
+    CHECK(b.enable.state == BMS_SIG_NEVER);
+    bms_rx_snapshot(&b, 0u, 48.0f, &s);
+    CHECK(!s.pre_disconnect);
+    CHECK(!s.lost);
+}
+
+/* Malformed/short 0x35C (0 bytes) is dropped whole, exactly like every other
+ * frame this driver decodes. */
+static void test_decode_35c_short_frame(void)
+{
+    bms_rx_t b;
+    uint8_t empty[1] = {0x01};   /* non-NULL; len=0 is what must reject it */
+    bms_rx_init(&b);
+
+    bms_rx_frame(&b, 100u, BMS_RX_ID_ENABLE, empty, 0u);
+    CHECK(b.enable.state == BMS_SIG_NEVER);
 }
 
 /* End-to-end sanity: a fresh BMS ceiling actually binds arbitration when it
@@ -444,7 +549,11 @@ void test_bms_rx(void)
     test_never_seen_vs_went_silent();
     test_wraparound_safety_at_late_uptime();
     test_degenerate_voltage();
-    test_pre_disconnect_always_false();
+    test_decode_35c_charge_enable();
+    test_pre_disconnect_latches_through_silence();
+    test_pre_disconnect_not_synthesized_from_plain_silence();
+    test_pre_disconnect_never_seen();
+    test_decode_35c_short_frame();
     test_binds_arbitration();
     printf("  [BMS-RX] %d checks\n", g_checks - at_entry);
 }

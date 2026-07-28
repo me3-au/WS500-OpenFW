@@ -72,6 +72,8 @@ void sil_init(sil_t *s, uint32_t seed, float soc0)
     s->isrc         = CTRL_ISRC_BATT_SHUNT;
     s->feed_soc     = false;
     s->bms_ccl_w    = CTRL_CEILING_INACTIVE;
+    s->bms_cvl_vcell = NAN;
+    s->pre_disconnect = false;
     s->user_cap_w   = CTRL_CEILING_INACTIVE;
     s->engine_w     = CTRL_CEILING_INACTIVE;
     s->ext_faults_extra = 0u;
@@ -182,6 +184,7 @@ void sil_step(sil_t *s)
     m.soc_trusted   = s->feed_soc;
     m.ignition      = s->ignition;
     m.feature_in    = false;
+    m.pre_disconnect = s->pre_disconnect;   /* deliverable #10 */
 
     /* App-side plausibility check, as a shunt driver would flag it. */
     m.ext_faults = s->ext_faults_extra;
@@ -200,6 +203,7 @@ void sil_step(sil_t *s)
     ctrl_limits_apply(&ceil, &s->lim, &s->g, r.vbat_v);
     ceil.thermal_w  = ctrl_thermal_update(&s->thermal, &s->thcfg, r.alt_temp_c, dt_s);
     ceil.bms_ccl_w  = s->bms_ccl_w;
+    ceil.bms_cvl_vcell = s->bms_cvl_vcell;  /* deliverable #10 -- already per-cell */
     ceil.user_cap_w = s->user_cap_w;
     ceil.engine_w   = s->engine_w;
 

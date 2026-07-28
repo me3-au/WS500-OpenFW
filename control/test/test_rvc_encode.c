@@ -78,6 +78,13 @@ static void test_charger_status(void)
     t.binding = CTRL_BIND_VOLTAGE_CLAMP;
     CHECK(rvc_encode_charger_status(&t, 0, 0x23, &fr) == 1);
     CHECK(fr.data[6] == 3);                        /* absorption */
+
+    /* deliverable #10: a BMS-lowered CVL reads the same way -- still BULK
+     * holding at a voltage clamp (control.h's CTRL_BIND_BMS_CVL). */
+    t.binding = CTRL_BIND_BMS_CVL;
+    CHECK(rvc_encode_charger_status(&t, 0, 0x23, &fr) == 1);
+    CHECK(fr.data[6] == 3);                        /* absorption */
+
     t.state = CTRL_FLOAT; t.binding = CTRL_BIND_STAGE;
     CHECK(rvc_encode_charger_status(&t, 0, 0x23, &fr) == 1);
     CHECK(fr.data[6] == 6);                        /* float */
