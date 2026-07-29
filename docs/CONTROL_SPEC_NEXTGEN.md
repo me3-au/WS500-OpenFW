@@ -1175,17 +1175,46 @@ and BLOCK classes re-evaluate live and self-clear/resume on recovery (the SIL
 classes are live. The §2.4 "alarm latched while stale" rule for BMS protection
 alarms is v2, arriving with CAN-IN.
 
-### 9.2 LED blink encoding (contract fixed now; encoder not yet built — D4)
+### 9.2 LED blink encoding (contract fixed now; encoder built, pin not — GH#42/D4)
 
 The status LED's *fault layer* blinks the single **highest-severity active
 code**, ties broken by lowest code — deterministically the same pick
 `n2k_alert_from_telemetry()` makes, so LED, MFD alert, and app always name the
 same fault. Pattern: `⌊code/10⌋` long flashes (600 ms) then `code mod 10`
 short flashes (200 ms), 300 ms between flashes, 2 s gap between repeats.
-Examples: code 5 = 5 short; code 10 = 1 long; code 13 = 1 long + 3 short. No
-active fault → the LED shows the state layer (charge-state indication, defined
-with the LED driver, not here). Blink patterns inherit §9.1's stability
-contract.
+Examples: code 5 = 5 short; code 10 = 1 long; code 13 = 1 long + 3 short.
+Blink patterns inherit §9.1's stability contract.
+
+**State layer (GH#42 — this is the definition the paragraph above used to
+defer).** No active fault → a heartbeat: one 100 ms on-pulse every 3000 ms.
+Both numbers are chosen against the fault layer, not in isolation: 100 ms is
+shorter than even the shortest fault flash (200 ms short-flash on-time), and
+3000 ms outlasts the fastest complete fault repeat cycle (code 1 = one 200 ms
+flash + the 2 s inter-repeat gap = 2200 ms). The two layers must not merely
+*be* different, they must be un-mistakable at a glance — misreading "healthy"
+as any fault code, or the reverse, on the one indicator an installer has in
+the field, is the exact failure this layer exists to prevent. The fault pick
+(and the fault-vs-heartbeat choice itself) is only re-evaluated at a pattern
+boundary — the end of a repeat/heartbeat gap — never mid-flash-sequence, so a
+fault appearing, changing, or clearing mid-blink changes only what plays
+*next*; the pattern already on screen always finishes intact. That bounds the
+display lag to one cycle (≤ ~2.4 s worst case, code 19) and is a display
+property only — the LED is advisory and never gates the field-drive path.
+
+**Implementation (GH#42).** `control/Inc/annunc.h` + `control/Src/annunc.c`
+build the pure, HAL-free blink state machine above (`ctrl_annunc_t`,
+caller-owned, no statics — the thermal.c precedent); `control/test/
+test_annunc.c` checks every one of the 19 §9.1 codes plus tie-breaking, the
+fault↔heartbeat transition, and the no-hybrid-mid-pattern guarantee. The
+fault pick itself was factored out of `n2k_encode.c` into `ctrl_fault_top_code()`
+(`control/Inc/faults.h`) so both consumers share one implementation of
+"deterministically the same pick" instead of two copies that could drift.
+**No pin is bound** — PROJECT_PLAN §0.6 V7 reads PA9 (`board.h`
+`OUT_LAMP_OR_LED_PIN`) as the stock-binary console TX path, while
+IO_COVERAGE.md instead names PA0/PB14 as the status outputs, and PA0 is not
+even GPIO-initialised (`board.c`). No tier-1 (bench) evidence exists for any
+of the three per §0.6's evidence precedence, so wiring `ctrl_annunc_update()`
+to an actual GPIO is left for Stage A once the pin is settled on the bench.
 
 ### 9.3 Code↔spec reconciliation — every mismatch found (GH#34 pass, 2026-07-28)
 
@@ -1224,9 +1253,20 @@ Found while producing §9.1; listed rather than papered over.
   severities, and texts are fixed *now* so detectors can land later without
   any wire change; §7's protection list stays aspirational for these until
   then.
-- **D4 — LED blink codes are promised (§5 outputs table; USER_MANUAL §8) but
-  no blink encoder exists** — only the raw PA9/PB14 output drivers (`dio.c`).
-  §9.2 fixes the contract; the implementation is outstanding M3/M4 work.
+- **D4 — PARTIALLY RESOLVED 2026-07-29 (GH#42).** LED blink codes were
+  promised (§5 outputs table; USER_MANUAL §8) with no blink encoder built —
+  only the raw PA9/PB14 output drivers (`dio.c`). The encoder now exists:
+  `control/Src/annunc.c` implements §9.2's pattern (pure, HAL-free,
+  unit-tested against every §9.1 code) and shares its fault pick with
+  `n2k_alert_from_telemetry()` via the new `ctrl_fault_top_code()`
+  (`faults.h`); §9.2 also now defines the state-layer heartbeat this
+  entry used to say was "defined with the LED driver, not here". What's
+  still outstanding, and why it's deliberately not done here: no GPIO is
+  driven. §0.6 V7 reads PA9 as stock-binary console TX, IO_COVERAGE.md
+  instead names PA0/PB14 as the status outputs, and PA0 is not even
+  GPIO-initialised (`board.c`) — no candidate has tier-1 (bench) evidence,
+  so binding `ctrl_annunc_update()`'s output to a real pin is Stage A work,
+  not a guess taken now on the one live unit (§0.6 evidence precedence, §5).
 - **D5 — header-comment drift in `control.h`** (fixed in this pass, comments
   only): `FIELD_OPEN` said "WARN/FAULT" where the mask says WARN;
   `FIELD_OVERCUR` said "BKIN territory" — a hardware backstop §0.6 V1+V2

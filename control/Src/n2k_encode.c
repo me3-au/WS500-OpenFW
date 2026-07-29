@@ -266,25 +266,22 @@ static uint8_t alert_prio_for(ctrl_severity_t sev)
 int n2k_alert_from_telemetry(const ctrl_telemetry_t *t, uint64_t device_name,
                              n2k_alert_t *a)
 {
-    unsigned bit, best_bit = 0;
-    ctrl_severity_t best = CTRL_SEV_INFO;
-    int found = 0;
+    unsigned code;
+    ctrl_severity_t best;
     if (!t || !a) return -1;
     if (t->faults == 0) return 0;
-    /* Highest-severity active fault wins; lowest bit index breaks ties so
-     * the pick is deterministic for a given bitfield. */
-    for (bit = 0; bit < 32; bit++) {
-        uint32_t b = t->faults & (1u << bit);
-        if (!b) continue;
-        ctrl_severity_t s = ctrl_fault_severity(b);
-        if (!found || s > best) { best = s; best_bit = bit; found = 1; }
-    }
+    /* GH#42: the highest-severity/lowest-code pick is now shared with the LED
+     * annunciator (faults.h ctrl_fault_top_code(), annunc.c) instead of a
+     * second copy of this loop, so §9.2's "deterministically the same pick"
+     * is structural, not a coincidence of two independent implementations. */
+    code = ctrl_fault_top_code(t->faults);
+    best = ctrl_fault_severity(1u << (code - 1u));
     memset(a, 0, sizeof *a);
     a->type             = alert_type_for(best);
     a->category         = 1u;                   /* technical */
     a->system           = 0u;
     a->subsystem        = 0u;
-    a->alert_id         = (uint16_t)(best_bit + 1u); /* bit index + 1 */
+    a->alert_id         = (uint16_t)code;        /* bit index + 1 (§9.1) */
     a->source_name      = device_name;
     a->source_instance  = 0u;
     a->source_index     = 0u;

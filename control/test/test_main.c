@@ -15,6 +15,7 @@ void test_faults(void);
 void test_fault_mask_completeness(void);  /* GH#41 */
 void test_thermal(void);
 void test_nan_max(void);   /* GH#43 */
+void test_annunc(void);    /* LED blink encoder, §9.2 (GH#42) */
 void test_telemetry(void);
 void test_telemetry_json(void); /* {"t":"telem"} line emitter (GH#35, #20) */
 void test_n2k_encode(void); /* NMEA2000 PGN encoders (CAN_INTEGRATION.md §2, GH#18) */
@@ -37,6 +38,7 @@ int main(void)
     test_fault_mask_completeness();
     test_thermal();
     test_nan_max();
+    test_annunc();
     test_telemetry();
     test_telemetry_json();
     test_n2k_encode();

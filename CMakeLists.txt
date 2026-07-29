@@ -43,6 +43,7 @@ set(APP_SRC
     control/Src/limits.c
     control/Src/faults.c
     control/Src/thermal.c
+    control/Src/annunc.c
     control/Src/telemetry.c
     control/Src/telemetry_json.c
     control/Src/n2k_encode.c

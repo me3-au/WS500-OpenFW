@@ -69,4 +69,17 @@ ctrl_severity_t ctrl_fault_severity(uint32_t faults);
 /* Field disposition (§7 ladder): OPEN dominates LIMP dominates CONTINUE. */
 ctrl_disposition_t ctrl_fault_disposition(uint32_t faults);
 
+/*
+ * ctrl_fault_top_code — the wire code (§9.1: bit index + 1) of the single
+ * highest-severity active fault; ties broken by the LOWEST code. Returns 0
+ * if `faults` is 0 (code 0 = no fault, §9.1).
+ *
+ * GH#42: this is the exact selection loop `n2k_alert_from_telemetry()`
+ * (n2k_encode.c) already used, pulled out here so the LED annunciator
+ * (annunc.c, §9.2) can make "deterministically the same pick" the N2K alert
+ * does — §9.2's own wording — instead of a second, maybe-diverging copy of
+ * the loop. Both callers pass the raw `ctrl_telemetry_t.faults` bitfield.
+ */
+unsigned ctrl_fault_top_code(uint32_t faults);
+
 #endif /* WS500_FAULTS_H */
