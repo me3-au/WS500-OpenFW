@@ -29,8 +29,8 @@
  * task brief: long enough that an operator watching a meter and re-issuing
  * `field <pct>` to hold a reading is never racing the clock, short enough
  * that a dropped session or a distracted operator cannot leave 20% field
- * current flowing into the dummy load (or, if this is ever run against a
- * rotor, the rotor) for any meaningful time. [SPEC-SIGNOFF: an engineering
+ * current flowing into the rotor for any meaningful time (in-place testing
+ * per Sec5, 2026-07-29). [SPEC-SIGNOFF: an engineering
  * choice for this test firmware, not a spec-mandated value.]
  */
 #define FIELD_GUARD_TIMEOUT_MS  5000u

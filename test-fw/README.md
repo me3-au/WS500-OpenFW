@@ -10,14 +10,20 @@
 
 **There is exactly one WS500 in this project, and it is installed and LIVE on a 48V
 system with a 4-ohm (12V-class) rotor** (PROJECT_PLAN §5 "installed-unit reality").
-This firmware is built to run on the **bench**, not the installed unit:
+Per the **in-place testing decision (owner, 2026-07-29 — PROJECT_PLAN §5)** this
+firmware runs on the **installed unit, in place**:
 
-1. **Current-limited bench supply** (13.2V, start ≤1A) — never a raw battery, and
-   never the installed unit.
-2. **Dummy field load** — a power resistor (~10 Ω, ≥50 W), never a rotor coil
-   directly, until the loop and fault paths are proven on the bench.
+1. **Engine OFF for the entire session** — no generation, no load-dump path; the
+   48V bank powers the unit exactly as in normal standby.
+2. **5A field-circuit breaker verified in circuit before the field is ever
+   energised** — the independent backstop for a stuck-high fault (100% duty
+   ≈ 12–13A ≈ 240–270% of rating → a thermal breaker trips in seconds). It does
+   **not** catch 3–5A marginal overdrive; that band belongs to the cap below,
+   which is why the cap stays primary.
 3. **Field duty is capped at 20%, compiled in, and structurally unexceedable** —
-   see `field_guard.c` below. `field_drive.c` itself (shared with the production
+   ≈2.4–2.8A average into the 4Ω rotor: under its ~3A winding rating and under
+   the 25% clamp the stock unit itself runs. See `field_guard.c` below.
+   `field_drive.c` itself (shared with the production
    firmware) still allows the full 0–100% range because the real regulator needs
    it; the 20% ceiling is a test-fw-only policy layered on top, in exactly one
    function, with no command, config value, or build flag able to raise it.
@@ -32,16 +38,18 @@ This firmware is built to run on the **bench**, not the installed unit:
 6. `cutoff` (the software fault-cutoff test) **latches** — once triggered, the
    field stays off until the board is reset. This is intentional.
 
-If this firmware is ever run against the live installed unit rather than a
-dedicated bench unit, the full PROJECT_PLAN §5 access ladder (readings → config →
-bench flash) still applies; nothing here grants an exception to it.
+Flashing this firmware at all still requires the full PROJECT_PLAN §5 ladder —
+M1 (proven DFU backup/restore) **and** the §8 virtual gauntlet green; nothing
+here grants an exception to it. In place, the `gpio outa`/`gpio outb` commands
+drive **real harness wires** — identify what each output feeds before toggling it.
 
 ---
 
 ## Purpose
 
 A separate, small, interactive-over-USB-CDC build target (`ws500-testfw.elf`,
-alongside the main `ws500-openfw.elf`) that confirms every I/O on the bench.
+alongside the main `ws500-openfw.elf`) that confirms every I/O on the installed
+unit — in place, engine off (SAFETY above).
 Shares `Core/Src/board.c` and the production drivers (`field_drive.c`,
 `safe_state.c`, `sensors.c`, `ina2xx.c`, `eeprom24c16.c`, `stator_rpm.c`, `dio.c`,
 `usb_cdc.c`) and the §7-style robustness trio (`safe_state.c` / `crash_record.c` /
@@ -66,8 +74,8 @@ cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
 cmake --build build -j        # builds BOTH ws500-openfw.elf and ws500-testfw.elf
 ```
 
-Flash `build/ws500-testfw.bin` per the bench procedure in `FLASH_AND_RECOVERY.md`
-(same DFU path as the main firmware). Connect over USB; it enumerates as a
+Flash `build/ws500-testfw.bin` per `FLASH_AND_RECOVERY.md` — in place, engine
+off, per the SAFETY section above (same DFU path as the main firmware). Connect over USB; it enumerates as a
 CDC-ACM port ("WS500-OpenFW" / "WS500 Regulator", same descriptors as the main
 firmware's config port — see `usb_cdc.c`). Open it in any serial terminal
 (115200 8N1 settings are accepted but not used — there is no UART behind this

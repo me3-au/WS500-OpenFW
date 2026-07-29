@@ -763,8 +763,9 @@ Failure-mode check behind the sign-off: if the pulse cycling ever wedged fully
 ON, continuous 5 % effort is 0.15 A ≈ 0.09 W into a 36 W-rated winding — the
 budget stays safe even when its own timer breaks. What SIL **cannot** prove:
 whether 0.15 A of excitation yields a readable stator waveform on the real
-machine — probe *detectability* is `bench-pending` (Stage-C dummy load first,
-then the installed alternator). If it falls short, raise the pulse amplitude
+machine — probe *detectability* is `bench-pending` (pulse electrical behaviour
+in place engine-off at Stage C; detectability itself needs the machine turning —
+first M6 supervised run; §5 in-place decision 2026-07-29). If it falls short, raise the pulse amplitude
 (the thermal argument above holds far beyond 5 %), not the on-ratio.
 
 ### 5.3 Inner field-loop numerics (v1 — specified 2026-07-28, GH#34)
@@ -904,17 +905,21 @@ measurement that closes it:
    (needs `τ_r` ≫ the 7 ms PWM period — almost certainly true, and the §0.5
    freewheel path supports it) and the power-loop phase at its ≈33–41 rad/s
    equivalent crossover, which SIL cannot check because its rotor is algebraic
-   (`i_f = duty·V/R`, no L). *Measurement:* duty-step the field into the §5
-   dummy load on the bench supply and scope the current rise (M2 test-fw,
-   inside its 20 % cap). *Rule:* if `τ_r` > 50 ms, derate KP ×2 before any
-   closed-loop bench CV work.
+   (`i_f = duty·V/R`, no L). *Measurement:* duty-step the field into the real
+   rotor in place, engine off, 5 A field breaker in circuit (M2/M3 test-fw,
+   inside its 20 % cap — PROJECT_PLAN §5 in-place decision 2026-07-29); this
+   measures the *true* winding L, which the retired dummy-load version never
+   could. *Rule:* if `τ_r` > 50 ms, derate KP ×2 before any
+   closed-loop CV work.
 2. **True alternator gain `dI/de` across the RPM range.** The tanh saturation
    shape is calibrated to a single trace point; both margin caveats above
    inherit that. *Measurement:* the M6 capability sweep (§3.4) at 2–3 held
    RPMs, including near the top of the engine range.
 3. **CV-hold quality on hardware** — accepts or retunes KV per the thin-margin
-   disposition above. *Measurement:* M3 exit bench CV hold into a dummy load;
-   record ~V ripple and duty spectrum for ≥10 min.
+   disposition above. *Measurement:* the M6-entry supervised engine run (moved
+   from the M3 exit — PROJECT_PLAN §5 in-place decision 2026-07-29: no
+   generation engine-off, so no CV hold to record before then); record V ripple
+   and duty spectrum for ≥10 min.
 
 The margins claimed in this section are claims about the **calibrated SIL
 plant** and are exactly as good as that calibration — that is the deliberate,

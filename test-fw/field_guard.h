@@ -5,7 +5,8 @@
  *
  * field_drive.c (shared with the production firmware) clamps to the full
  * 0-100% range because the real regulator needs it; this module exists so
- * that TEST-FW never asks for more than a bench dummy load should ever see.
+ * that TEST-FW never asks for more than the installed 4-ohm rotor can safely
+ * see (in-place, engine-off testing -- Sec5 decision, 2026-07-29).
  * Three independent guarantees, each load-bearing on its own:
  *
  *   1. HARD 20% DUTY CAP, compiled in, structurally unexceedable. field_

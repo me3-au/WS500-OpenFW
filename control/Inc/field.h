@@ -17,7 +17,8 @@
  * Signed off 2026-07-28 (GH#34) — CONTROL_SPEC §5.2 detect-budget table: pulse
  * I_f ≈ 0.15 A, average ≈ 15 mA / ≈9 mW rotor dissipation; safe even wedged
  * fully ON (0.09 W vs the 36 W rating). Probe DETECTABILITY at 0.15 A is
- * bench-pending (Stage-C dummy load, then the installed machine). */
+ * bench-pending (needs the machine turning — first M6 supervised run; §5
+ * in-place decision 2026-07-29). */
 #define CTRL_RUN_DETECT_EFFORT     0.05f   /* ≤5 % of duty_max while not running */
 #define CTRL_RUN_PROBE_PERIOD_MS   500u    /* probe cycle */
 #define CTRL_RUN_PROBE_ON_MS       50u     /* bounded on-time (10 % ratio) */

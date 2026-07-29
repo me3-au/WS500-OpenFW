@@ -5,26 +5,31 @@
  * SPDX-License-Identifier: MIT
  *
  * ============================================================================
- *  BENCH USE ONLY. DUMMY LOAD ONLY. READ PROJECT_PLAN.md Sec5 BEFORE FLASHING.
+ *  INSTALLED UNIT, IN PLACE, ENGINE OFF, 5A FIELD BREAKER IN CIRCUIT.
+ *  READ PROJECT_PLAN.md Sec5 ("in-place testing decision") BEFORE FLASHING.
  * ============================================================================
  * There is exactly ONE WS500 in this project and it is installed and LIVE on
  * a 48V system with a 4-ohm (12V-class) rotor (PROJECT_PLAN Sec5
- * "installed-unit reality"). This firmware exists to confirm every I/O on the
- * BENCH, with:
- *   - a current-limited bench supply (13.2V, start <=1A) -- never a raw
- *     battery, and never the installed unit;
- *   - a dummy field load (power resistor, ~10 ohm, >=50W) -- never a rotor
- *     coil directly, until the loop + fault paths are proven on the bench;
+ * "installed-unit reality"). Per the in-place decision (owner, 2026-07-29)
+ * this firmware runs ON the installed unit, with:
+ *   - the ENGINE OFF for the entire session -- no generation, no load dump;
+ *     the bank powers the unit exactly as in normal standby;
+ *   - the 5A field-circuit breaker verified in circuit -- the stuck-high
+ *     backstop (100% duty ~= 12-13A, ~240-270% of rating, trips in seconds);
+ *     it does NOT catch 3-5A marginal overdrive, which is the cap's job:
  *   - the field PWM path capped at 20% duty, COMPILED IN and structurally
- *     unexceedable -- see field_guard.c, the ONLY module in this firmware
+ *     unexceedable (~2.4-2.8A average into the 4-ohm rotor, under its ~3A
+ *     winding rating and the stock 25% clamp) -- see field_guard.c, the ONLY
+ *     module in this firmware
  *     permitted to call field_drive_set() with a nonzero duty. field_drive.c
  *     itself (shared with the production firmware) still allows the full
  *     0-100% range, because the real regulator needs it; the cap here is a
  *     test-fw-only policy layered on top, not a change to that shared driver.
- * If this firmware is ever run against the live installed unit rather than a
- * dedicated bench unit, the full PROJECT_PLAN Sec5 access ladder (readings ->
- * config -> bench flash) still applies -- this firmware does not grant an
- * exception to it.
+ * Flashing this firmware at all still requires the full PROJECT_PLAN Sec5
+ * ladder -- M1 (proven DFU backup/restore) AND the Sec8 virtual gauntlet
+ * green; nothing here grants an exception to it. The gpio out commands drive
+ * REAL harness wires in place -- identify what each output feeds before
+ * toggling it.
  *
  * Shares Core/Src/board.c and the production drivers (field_drive.c,
  * safe_state.c, sensors.c, ina2xx.c, eeprom24c16.c, stator_rpm.c, dio.c,

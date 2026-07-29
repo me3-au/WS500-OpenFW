@@ -108,7 +108,7 @@ Until both conditions hold, custom firmware remains on the developer's workstati
 
 ### M1 — Backup & Recovery Proven
 
-> Exit: stock image demonstrably restores the unit via DFU on the bench; `FLASH_AND_RECOVERY.md` written.
+> Exit: stock image demonstrably restores the unit via DFU in place (engine off — SAFETY.md in-place decision, 2026-07-29); `FLASH_AND_RECOVERY.md` written.
 
 ### M2 — Bring-Up Firmware
 
@@ -120,7 +120,7 @@ Until both conditions hold, custom firmware remains on the developer's workstati
 
 ### M3 — Core Firmware
 
-> Exit: closed-loop CV hold on the bench supply into a dummy load, with fault cutoff verified; IWDG active; an induced HardFault provably lands in safe state + crash record + clean reboot.
+> Exit (amended 2026-07-29, SAFETY.md in-place decision): on the installed unit, engine off — field-command tracking into the real rotor (≤20 % test cap, 5 A field breaker in circuit), software fault cutoff verified; IWDG active; an induced HardFault provably lands in safe state + crash record + clean reboot; rotor-τ duty step measured. The closed-loop CV-hold record moved to the M6 entry gate (no generation engine-off).
 
 ### M4 — Config + Client App
 
@@ -132,6 +132,7 @@ Until both conditions hold, custom firmware remains on the developer's workstati
 
 ### M6 — Real-Alternator Trials + Release
 
+> Entry gate (moved from M3, 2026-07-29): the first supervised engine run produces the ≥10 min CV-hold ripple/duty record and the CONTROL_SPEC §5.3 decision rule is applied before any further live running.
 > Exit: driven alternator charges a bank under supervision; `v0.1.0` tagged.
 
 ---

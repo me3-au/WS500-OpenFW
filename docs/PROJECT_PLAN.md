@@ -351,13 +351,16 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
 - **M1 — Backup & recovery proven** → *no custom firmware is flashed before this passes.*
   Verified stock-image backup, documented+rehearsed DFU restore, SWD permanently wired,
   BOOT0/DFU entry-exit rehearsed. *Exit:* stock image demonstrably restores the unit via DFU
-  on the bench; `FLASH_AND_RECOVERY.md` written.
+  **in place** (engine off — §5 in-place decision, 2026-07-29); `FLASH_AND_RECOVERY.md` written.
 - **M2 — Bring-up firmware** (`test-fw`, §4). 🔨 *firmware written 2026-07-27 (#14) and
-  CI-built; everything below is the bench session it enables.* Confirm every I/O on the bench; **bench-confirm
+  CI-built; everything below is the hardware session it enables — run **in place, engine
+  off** per the §5 decision (2026-07-29).* Confirm every I/O; **bench-confirm
   ADC scaling** (binding is already recovered); resolve the two label unknowns (PB13 =
-  Enable vs Feature-In; which output = Lamp vs LED); identify the 0x0C/0x10/0x4C I²C devices;
-  confirm package + field-driver topology. *Exit:* `board.h` constants bench-verified; I/O
-  coverage all ✅.
+  Enable vs Feature-In; which output = Lamp vs LED); `i2cscan` to settle the V7 I2C2 bus
+  caveat (GH#36 — the old "0x0C/0x10/0x4C devices" item is refuted, §0.6 V3);
+  confirm package + field-driver topology. In place, the GPIO walk drives **real harness
+  outputs** — identify what each output wire feeds before toggling it (§5). *Exit:*
+  `board.h` constants bench-verified; I/O coverage all ✅.
 - **M2.5 — Control-model reconciliation** → *gates M3.* ✅ **mostly done.**
   Legacy `regulator.{h,c}` deleted; replaced by the pure, HAL-free **`control/`** core
   (spec-native `ctrl_*` vocabulary, two-stage CHARGE/REST, per-cell V, watts arbitration).
@@ -405,29 +408,39 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
   Implementation is sequenced behind the Renode work because the emulated RCC
   may not raise HSERDY (cf. `renode/v6-stubs/`). **CAN Rx (#10) is NOT an M3 item — it is v2** (see the
   deliverable row); do not pull it forward. (§7 robustness
-  layer #21 is done, CI-proven 2026-07-27). *Exit:* closed-loop CV hold on the
-  bench supply into a dummy load, with fault cutoff verified; IWDG active; an induced
-  HardFault provably lands in safe state + clean reboot.
-  **Added 2026-07-28 (GH#34): a ≥10 min CV-hold ripple/duty record is a HARD exit
-  criterion, not an optional measurement.** §5.3's derivation puts the CV channel's
-  phase margin at only **≈13–15°** against a 45° norm. The decision (PM) is *not* to
-  retune `KV` blind: SIL shows convergent bounded behaviour, and safety does not rest
-  on that margin — the OV path and the rotor clamp bound the worst case at rated rotor
-  current regardless. But an underdamped loop is exactly what a bench measurement
-  settles cheaply and what guesswork settles badly, so M3 does not close until the
-  record exists. Decision rule already written into §5.3: halve `KV` or shorten τ if
-  CV-hold chatter exceeds ±0.005 V/cell. Two companion measurements ride along —
-  rotor τ = L/R via a duty step on the dummy load (if τ > 50 ms, derate `KP` 2× first)
-  and dI_field/de across RPM, which closes the high-RPM margin caveat.
+  layer #21 is done, CI-proven 2026-07-27). *Exit (amended 2026-07-29, §5 in-place
+  decision):* on the installed unit, engine off — field-command tracking into the real
+  rotor (≤20 % test cap, 5 A field breaker in circuit), software fault cutoff verified,
+  IWDG active, an induced HardFault provably lands in safe state + clean reboot, and the
+  rotor-τ duty step measured (below). Closed-loop CV cannot be exercised engine-off (no
+  generation → the loop just rails at the clamp), so the CV-hold record moves to M6 entry.
+  **Added 2026-07-28 (GH#34), re-homed 2026-07-29: the ≥10 min CV-hold ripple/duty
+  record stays a HARD criterion, but under the §5 in-place decision it cannot be
+  produced engine-off — it moves from the M3 exit to the M6 entry gate** (M6 does not
+  proceed past its first supervised engine run until the record exists and the §5.3
+  decision rule is applied). The reasoning is unchanged: §5.3's derivation puts the CV
+  channel's phase margin at only **≈13–15°** against a 45° norm. The decision (PM) is
+  *not* to retune `KV` blind: SIL shows convergent bounded behaviour, and safety does
+  not rest on that margin — the OV path and the rotor clamp bound the worst case at
+  rated rotor current regardless. But an underdamped loop is exactly what a hardware
+  measurement settles cheaply and what guesswork settles badly. Decision rule already
+  written into §5.3: halve `KV` or shorten τ if CV-hold chatter exceeds ±0.005 V/cell.
+  Of the two companion measurements, **rotor τ = L/R stays in M3**: a duty step into
+  the *real* rotor, engine off, inside the 20 % cap, measures the true winding L —
+  strictly better than the retired dummy-load version (if τ > 50 ms, derate `KP` 2×
+  before any closed-loop work); **dI_field/de across RPM** rides with the M6
+  capability sweep as before, closing the high-RPM margin caveat.
 - **M4 — Config + client app.** Config schema (per #6a), flash config store (CRC+version),
   `ws500ctl` read/write/verify, FW update via CLI, telemetry stream (#20). *Exit:* config
   round-trips; FW updates via `ws500ctl`; config survives an update.
 - **M5 — CAN Tx / NMEA2000.** Status PGN set, RBM participation, `CAN_TECHNICAL_SPEC.md` +
   user doc. *(Tx only — CAN-IN / Rx control was #10's other half here and is now V2, §1.1.)*
   *Exit:* regulator telemeters valid PGNs and participates in RBM on a real bus.
-- **M6 — Real-alternator trials + release.** Staged live testing per §5 exit ladder; user
-  guide; **versioned tagged release** with CHANGELOG. *Exit:* driven alternator charges a
-  bank under supervision; `v0.1.0` tagged.
+- **M6 — Real-alternator trials + release.** *Entry gate (moved from M3, 2026-07-29):*
+  the first supervised engine run produces the ≥10 min CV-hold ripple/duty record and
+  the §5.3 decision rule is applied before any further live running. Staged live testing
+  per §5 exit ladder; user guide; **versioned tagged release** with CHANGELOG. *Exit:*
+  driven alternator charges a bank under supervision; `v0.1.0` tagged.
 
 ## 3. Risk register
 
@@ -435,9 +448,9 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
 |---|---|---|
 | Brick the only unit | project-ending (no spare) | M1 gate: proven DFU restore before first flash; SWD wired; ROM DFU is unerasable |
 | Wrong INA2xx scaling → bad current | unsafe charging | bench-verify against a reference meter (M2/M3); emulation cross-check |
-| Field-driver damage | hardware loss | dummy load, 20 % duty cap in test builds, TIM1 BKIN cutoff, current-limited supply (§5) |
+| Field-driver damage | hardware loss | 20 % compiled duty cap, 5 A field breaker in circuit, software MOE-clear cutoff (BKIN unrouted — §0.6 V1/V2), engine-off rule (§5) |
 | Accidental GPL ingestion (would forfeit the MIT/permissive goal) | legal/OSS | LICENSE+NOTICE done (#16 ✅); no-GPL-in-tree rule (§0.5); dependency additions require a license check |
-| Single irreplaceable unit — **installed, in service, 48 V bank, 4 Ω/12 V rotor** (§5) | any HW test is high-stakes *and* disrupts a live system; rotor overdrive is the top hazard | virtual-first gauntlet (§8) gates Stage C; staged access ladder (§5): readings-only → config → bench flash; rotor clamp + duty cap proven in SIL first |
+| Single irreplaceable unit — **installed, in service, 48 V bank, 4 Ω/12 V rotor** (§5) | any HW test is high-stakes *and* disrupts a live system; rotor overdrive is the top hazard | virtual-first gauntlet (§8) gates Stage C; staged access ladder (§5): readings → config → in-place flash, engine off (2026-07-29); rotor clamp + duty cap proven in SIL first; 5 A field breaker as stuck-high backstop |
 | Control-model drift (code vs spec) | rework, bugs | M2.5 reconciliation; spec is single source of truth |
 | Draft specs with open questions | design churn | track `PROFILE_SPEC` §8 questions as issues; resolve before M3 coding they touch |
 | Research confidence inflation (IO_COVERAGE marks inferred items ✅; specs build on them) | firmware written against wrong hardware facts (BKIN, DIP pins, INA variant) | §0.6 virtual queue V1–V6; downgrade IO_COVERAGE statuses to match evidence |
@@ -451,24 +464,46 @@ Each milestone lists **exit criteria**. `→` marks a hard gate.
 Separate small build target sharing `board.c`. Interactive over USB CDC:
 - LED / GPIO walk (confirm pin map + resolve Enable-vs-Feature-In, Lamp-vs-LED labels)
 - Live ADC dump of all 7 channels (bench-confirm the recovered scaling)
-- Field PWM at commanded duty **with a hard 20 % cap compiled in**, dummy load only
-- TIM1 break-input test (assert fault line → verify PWM hard-stops)
+- Field PWM at commanded duty **with a hard 20 % cap compiled in** — in place per §5
+  (2026-07-29): real rotor, engine off, 5 A field breaker in circuit
+- Software fault-cutoff test (`cutoff`: MOE-clear hard-stop — BKIN is unrouted,
+  §0.6 V1/V2; no break-input exists on this board)
 - CAN loopback + external echo test
-- I²C bus scan (confirm INA2xx @ 0x40; identify 0x0C/0x10/0x4C)
+- I²C bus scan (which bus actually answers — the V7 I2C2 caveat, GH#36; the old
+  "0x0C/0x10/0x4C devices" item is refuted, §0.6 V3)
 
 Everything it proves feeds `board.h` constants and the HW spec.
 
 ## 5. Bench safety — *to extract to `SAFETY.md`* — protecting the one WS500
 
-Rules, in force until explicitly retired:
-1. **Current-limited bench supply** (13.2 V, start ≤1 A) — never a raw battery for bring-up.
-2. **Dummy field load** — power resistor (~10 Ω, ≥50 W) until the loop + fault paths are proven.
-3. **Fail-safe defaults** — firmware ships field-OFF; watchdog on; TIM1 break verified in M2.
-4. **Duty-cycle cap compiled into test builds** (20 %).
-5. **Never spin a real alternator without a battery connected** (load dump). Real-alternator
-   work starts only in M6: dummy load → field coil on dead alternator → driven alternator on
-   a battery bank with supervision.
-6. **Recovery always one step away** — SWD permanently wired; stock restore rehearsed (M1).
+Rules, in force until explicitly retired **(amended 2026-07-29 — in-place testing
+decision, below; rules 1–2 replace the retired bench-supply / dummy-load pair)**:
+1. **Engine OFF for all pre-M6 hardware work.** Engine off ⇒ no generation and no
+   load-dump path; the 48 V bank powers the unit exactly as in normal standby.
+   The first engine-on minute is M6 entry, supervised (rule 5).
+2. **5 A field-circuit breaker verified in circuit before any custom firmware
+   energises the field.** Independent backstop for a stuck-high driver or a
+   clamp-bypassing bug: 100 % duty ≈ 12–13 A ≈ 240–270 % of rating → a thermal
+   breaker trips in seconds-to-tens-of-seconds, which the rotor's thermal mass
+   rides out. It does **not** catch marginal overdrive (3–5 A sits under the
+   trip curve) — that band belongs to the compiled cap (rule 4) and the 25 %
+   production clamp, which is why the breaker supplements and never replaces
+   them. `bench-pending`: sight the breaker's DC rating at the first session
+   (it interrupts an inductive DC circuit).
+3. **Fail-safe defaults** — firmware ships field-OFF; watchdog on; the
+   **software** fault cutoff (MOE-clear — BKIN is unrouted, §0.6 V1/V2) verified
+   in M2.
+4. **Duty-cycle cap compiled into test builds (20 %)** — on this 48 V bank that
+   is ≈2.4–2.8 A average into the 4 Ω rotor: under the ~3 A winding rating and
+   under the 25 % clamp the stock unit itself runs (★ below). The cap is the
+   *primary* rotor protection; the breaker (rule 2) is the backstop.
+5. **Never spin the alternator without a battery connected** (load dump) —
+   automatically satisfied in place (the bank is hardwired); becomes a live
+   check again if the unit is ever bench-run. Real-power work starts only in
+   M6: in-place engine-off proofs → first supervised engine run (CV-hold
+   record, §2 M3/M6) → supervised charge runs.
+6. **Recovery always one step away** — SWD permanently wired; stock restore
+   rehearsed in place (M1).
 7. **Exactly one WS500 exists — irreplaceable.** M1 (backup + rehearsed restore) is absolute;
    any test that could plausibly *damage* (not just brick) hardware gets a Renode dry run first.
 
@@ -487,6 +522,21 @@ mishap also takes down a live charging system. Two consequences:
     is **field-clamp-limited, not voltage-limited** (BatV reached only ~54.7 V vs the 56 V
     target). So the 25 % rotor clamp our design specifies is exactly what the product does —
     our firmware must reproduce it. Reference trace: `ws500_chargerun.log` (session capture).
+
+**In-place testing decision (owner, 2026-07-29):** the unit is hardwired into the
+installed system and pulling it for bench work is impractical; a **5 A breaker
+protects the field circuit**. All pre-M6 hardware stages — M1 DFU rehearsal, M2
+test-fw, M3 engine-off proofs — therefore run **on the installed unit, in place,
+engine off**, over the same USB connection Stage A already uses. What each
+retired bench precaution maps to: current-limited supply → the bank in standby
+(engine off ⇒ no generation; the unit draws what it always draws); dummy field
+load → the real rotor behind the 20 % compiled cap (≈2.4–2.8 A, inside the
+winding rating) with the 5 A breaker as the stuck-high backstop; "unit removed
+to the bench" → unnecessary — DFU and USB do not care where the unit is mounted.
+Two consequences are folded into §2: the M3 closed-loop CV-hold record cannot
+exist engine-off and moves to M6 entry, and the M2 GPIO walk now drives real
+harness outputs — identify what each output wire feeds before toggling it.
+
 - **Hardware access is staged — readings first:**
   - **Stage A — observation only (safe now, stock firmware untouched):** USB `$` protocol
     readout (dump + archive the full stock config — also documents the stock parameter set),
@@ -497,8 +547,9 @@ mishap also takes down a live charging system. Two consequences:
   - **Stage B — reversible config interaction:** only after the Stage-A config archive
     exists; `$` writes are stock-supported and restorable from the dump.
   - **Stage C — custom firmware:** only after M1 (proven DFU backup/restore) *and* the §8
-    virtual gauntlet passes. First flash happens on the bench (unit temporarily removed),
-    never in-situ.
+    virtual gauntlet passes. First flash happens **in place, engine off, 5 A field breaker
+    verified** (2026-07-29 decision above — the bench-removal requirement is retired);
+    never with the engine running.
 
 ## 6. Flash / update / rollback / backup / recovery — *to extract to `FLASH_AND_RECOVERY.md`*
 
