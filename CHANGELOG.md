@@ -14,6 +14,22 @@ milestone M6** (real-alternator trials passed) per `docs/PROJECT_PLAN.md`. Until
 Current state, honestly:
 
 ### Added
+- **Driver-stage over-temp protection** (GH#39) — the field switch had none: a 120 °C
+  WARN that changed nothing, and no arbitration ceiling reading `driver_temp_c` at all,
+  so a cooking FET kept driving at full commanded duty. That was weaker than the stock
+  firmware, and it mattered because BKIN is unrouted and there is no field-current sense,
+  making this NTC the switch stage's only guard. Now two layers: a graduated derate (a
+  second thermal-governor instance feeding the normal watts arbitration as
+  `CTRL_BIND_DRIVER_THERMAL`) and a hard block at 125 °C — new fault code 19,
+  CRITICAL/OPEN, latching until reset, matching stock's threshold. All six governor
+  constants are `[SPEC-SIGNOFF]` bench-pending; there is no thermal model of this board
+  to derive them from.
+- **Fault-mask completeness guard** (GH#41) — `SHUNT_OPEN`/`SHUNT_REVERSED` belonged to
+  no disposition mask, so a lying current source read as INFO/CONTINUE against §7's
+  intent; both now LIMP. The durable half is `test_fault_mask_completeness()`, which
+  enumerates bit positions programmatically so the next unclassified bit fails the build
+  instead of silently defaulting to CONTINUE.
+
 - **Documentation + reverse-engineering corpus** — recovered STM32F072RB hardware
   interface (`docs/WS500_HARDWARE_SPEC.md`, `docs/IO_COVERAGE.md`, binary-verified facts in
   `docs/PROJECT_PLAN.md` §0.6), control/profile specs (`CONTROL_SPEC_NEXTGEN.md`,
@@ -46,6 +62,16 @@ Current state, honestly:
   `bms_required` flag, field-path safety gate).
 
 ### Fixed
+- **Alternator thermal protection could be silently disabled by configuration** (GH#43) —
+  the app fed both the over-temp fault input and the thermal governor from ADC channel A
+  alone and discarded `alt_temp2_c`, so binding the battery probe to channel A moved the
+  alternator probe to the unread channel: the fault could never fire and the governor
+  returned "no ceiling" forever, with nothing on the wire to say so. Both call sites now
+  fold the max of whichever alternator-side channels are finite.
+- **`ws500-testfw.elf` failed to link** — `board_clock_config()` called into the CAN stack
+  on the HSE-fallback path, but `board.c` is shared with test-fw, which deliberately
+  excludes `can_n2k.c`. The GH#38 "untrusted clock → go CAN-quiet" policy now lives in
+  `can_n2k_init()`, which reads `board_clock_running_on_hse()`; behaviour is unchanged.
 - **Four control-core defects caught by the SIL gauntlet** — NaN field duty on lost VBat
   sense; permanent effort-integrator latch on a NaN shunt reading; tick-rate-dependent,
   marginally-unstable inner-loop gains (now dt-scaled, KP reduced 5×); and a knife-edge

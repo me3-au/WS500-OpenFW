@@ -239,6 +239,14 @@ settles most of them):
   in at the bench and the guesswork disappears; until then this is `bench-pending`.
 - Still open: bootstrap max-duty cap (§0.5);
   re-clone VSR upstream unshallow if pre-2015 license history ever matters.
+- **Which pin is the status LED (GH#42)** — unresolved, and the two records
+  disagree: §0.6 V7 identifies **PA9** as the stock console-TX path, while
+  `board.h` still assigns PA9 to `OUT_LAMP_OR_LED_PIN`; `IO_COVERAGE.md`
+  instead names **PA0/PB14** as the status outputs, and PA0 is never even
+  GPIO-initialised (`board.c`). No candidate has tier-1 (bench) evidence, so
+  per the §0.6 precedence no pin is chosen in firmware — the GH#42 blink
+  encoder is being built pure and unbound until the Stage-A GPIO walk settles
+  it. `bench-pending`.
 - **Update our own `board.h`**: STATOR path is EXTI10 (PA10), not a TIM2 capture channel;
   the `STATOR_TIM = TIM2` define is the timebase, and RPM will be EXTI-edge + CNT-diff.
 
@@ -268,7 +276,7 @@ settles most of them):
 | 18 | **Versioning + release** | `VERSION` (0.1.0-dev) + `Core/Inc/version.h` + `CHANGELOG.md` ✅ (2026-07-24); tag/release flow exercised at M6 | M0→M6 | 🔨 |
 | 19 | **Emulation harness** | Renode model (STM32F072 + peripherals + INA stub) for hardware-free dev/CI; part of the §8 virtual-first strategy with the SIL plant sim (8.1). ✅ **CI-green 2026-07-26**: `renode/` harness boots the real ELF, `ctrl_tick` liveness verified in the `emulation` job. V6 stock-trace use still ⬜ | M0→M1 | ✅ |
 | 20 | **Telemetry / logging** | **USB half ✅ 2026-07-27**: MIT CDC-ACM transport (ST middleware rejected, SLA0044) + 1 Hz JSON telem line + telem-get with the §7 diag surfaces; caps ["cfg","telem"]. Bench-pending: real-host enumeration; release: permanent PID. **CAN half ✅ 2026-07-27** — #9's proprietary fast-packet carries the full snapshot (field effort, binding source + ceiling, temps, RPM state, active profile, fault bits) at 1.5 s. **Error counters ✅ 2026-07-28**: `can_boff` / `can_txdrop` (from `can_n2k_bus_off_count()` / `can_n2k_tx_dropped_count()`) now ride the `diag` object of the 1 Hz line, closing the §7 R6 "every error counter is visible" requirement and the `TODO(GH#10)` in `can_n2k.h`; asserted in the pure-layer test (2125 host checks). Remaining: bench host-enumeration only | M4–M5 | 🔨 |
-| 21 | **Robustness / error reporting** | §7 R0–R6 ✅ **implemented + CI-proven 2026-07-27** (GH#27 closed): funnel, windowed checkpoint IWDG, `.noinit` crash ring + reset-cause counters, two-stage M0 fault handlers, flash CRC (report-only) + stack painting + bottom-of-RAM stack, PVD, err budgets. Renode proves the M3 fault-path criterion in CI. Bench-pending: IWDG/PVD behavior, SRAM-parity + BOR option bytes (manual, M1-adjacent); telemetry surface with #20 | M3–M4 | ✅ fw side |
+| 21 | **Robustness / error reporting** | §7 R0–R6 ✅ **implemented + CI-proven 2026-07-27** (GH#27 closed): funnel, windowed checkpoint IWDG, `.noinit` crash ring + reset-cause counters, two-stage M0 fault handlers, flash CRC (report-only) + stack painting + bottom-of-RAM stack, PVD, err budgets. Renode proves the M3 fault-path criterion in CI. **Fault-ladder follow-ups ✅ 2026-07-28** (GH#39/GH#41/GH#43): driver-stage thermal protection (graduated derate + 125 °C hard block), shunt-fault mask completeness (`test_fault_mask_completeness()` guards future bits), two-channel alternator temperature folding (lifts the `adc_a` prohibition in bench runsheet, GH#43). Bench-pending: IWDG/PVD behavior, SRAM-parity + BOR option bytes (manual, M1-adjacent); telemetry surface with #20; driver NTC single-read loss annunciation (GH#39 follow-up) | M3–M4 | ✅ fw side |
 
 ### 1.1 V2-deferred scope (owner decision, 2026-07-28)
 

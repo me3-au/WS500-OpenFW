@@ -334,14 +334,20 @@ connection before assuming a driver problem).
 > in turn and see which ADC slot moves. That binding is what arms the LFP
 > low-temperature charge cutoff in V1 (GH#40), so it is worth doing.
 >
-> **But do NOT then configure `batt_temp_src: adc_a`, even if the measurement
-> says the battery probe is on PA1.** The app currently feeds alternator
-> over-temp and the thermal governor from channel A only, and `alt_temp2_c` is
-> read and discarded — so binding `adc_a` would silently disable alternator
-> thermal protection entirely (GH#43, found by safety review). `adc_b` is safe.
-> If the measurement comes back "battery probe is on PA1", record it, leave
-> `batt_temp_src: none`, and wait for GH#43. Nothing here is urgent enough to
-> charge a live bank with the alternator's over-temp guard switched off.
+> **The `adc_a` prohibition that used to stand here is lifted (GH#43,
+> 2026-07-28).** It existed because the app fed alternator over-temp and the
+> thermal governor from channel A only, discarding `alt_temp2_c` — so binding
+> the battery probe to A silently disabled alternator thermal protection. Both
+> call sites now fold `ctrl_nan_max2(alt_temp_c, alt_temp2_c)`, the max of
+> whichever alternator-side channels are finite, so the surviving channel keeps
+> the guard alive whichever one the battery probe claims. **Either `adc_a` or
+> `adc_b` is safe to configure.**
+>
+> What has NOT changed is which physical wire each channel is: the PA1/PA2
+> mapping is still bench-pending. Record what the resistance-injection test
+> above tells you, and set `batt_temp_src` from that measurement rather than
+> from the pin names — this procedure is what establishes the mapping, so
+> nothing downstream should assume it before this step is done and written up.
 
 ### Procedure 5 — Battery/alt sense vs reference DMM
 
