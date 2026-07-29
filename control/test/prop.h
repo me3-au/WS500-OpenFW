@@ -224,7 +224,7 @@ static inline void prop_core_check(prop_core_inv_t *iv, const ctrl_command_t *cm
     prop_note(&iv->enums,
               (cmd->state == CTRL_STANDBY || cmd->state == CTRL_BULK || cmd->state == CTRL_FLOAT) &&
               (int)cmd->standby_reason >= 0 && cmd->standby_reason <= CTRL_SB_FAULT &&
-              (int)cmd->binding >= 0 && cmd->binding <= CTRL_BIND_RUN_DETECT, cx,
+              (int)cmd->binding >= 0 && cmd->binding <= CTRL_BIND_DRIVER_THERMAL, cx,
               "state=%d reason=%d binding=%d",
               (int)cmd->state, (int)cmd->standby_reason, (int)cmd->binding);
 }

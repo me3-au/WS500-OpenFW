@@ -34,6 +34,7 @@ static ctrl_globals_t s_g;
 static ctrl_profile_t s_prof;
 static ctrl_limits_t  s_lim;
 static ctrl_thermal_cfg_t s_th;
+static ctrl_thermal_cfg_t s_driver_th;  /* GH#39 — driver-stage (PA3) governor */
 
 /* JSON-lines protocol instance (~3.7 KB of the part's 16 KB, dominated by the
  * CFG_MSG_LINE_MAX request buffer — see config_msg.h for why that size). */
@@ -235,6 +236,41 @@ void config_init(void)
     s_th.ceiling_max_w  = 100000.0f;   /* effectively unbound until temp climbs */
     s_th.gain_w_per_c_s = 50.0f;
 
+    /*
+     * Driver-stage (PA3) governor (§5.1, GH#39) — [SPEC-SIGNOFF], ALL values
+     * bench-pending. There is no thermal model of the WS500 switch stage to
+     * derive these from; they are chosen only to bracket the ONE number RE
+     * gave us — stock's single 125 C fault (§0.6 V8) — with a graduated
+     * derate instead of stock's presumed cliff:
+     *   target_c 100 / hard_c 120: onset ~100 C, at the floor by ~120 C (the
+     *     point CTRL_FAULT_SELF_OVERTEMP's existing WARN already fires,
+     *     control.c DRIVER_HOT_HARD_C) — ctrl_thermal_update() snaps straight
+     *     to derate_floor_w the instant hotspot_c >= hard_c (thermal.c), so
+     *     "at the floor by 120" is exact regardless of the integral term.
+     *     The hard 125 C BLOCK above this (CTRL_FAULT_DRIVER_OVERTEMP,
+     *     control.c) is a separate mechanism, not part of this ceiling.
+     *   derate_floor_w 100: reuses the alternator governor's floor above for
+     *     lack of any driver-current-derived number to prefer instead.
+     *   gain_w_per_c_s 50: reuses the alternator governor's gain — the
+     *     target-to-hard span here (20 C) is comparable to the alternator's
+     *     (15 C), so parity was judged less arbitrary than inventing a
+     *     different number with equally no data behind it.
+     *   tau_s 30: the ONE value NOT copied from the alternator governor
+     *     (300 s) — a driver-stage FET/heatsink is a much smaller thermal
+     *     mass than an alternator frame, so a materially shorter time
+     *     constant is directionally right, but this is a guess, not a
+     *     measurement. HIGHEST-UNCERTAINTY constant in this block; bench
+     *     characterization (a step-load driver-temp trace) should replace it
+     *     before any sustained-load run.
+     *   ceiling_max_w 100000: unbound, matching the alternator governor.
+     */
+    s_driver_th.tau_s          = 30.0f;
+    s_driver_th.target_c       = 100.0f;
+    s_driver_th.hard_c         = 120.0f;
+    s_driver_th.derate_floor_w = 100.0f;
+    s_driver_th.ceiling_max_w  = 100000.0f;
+    s_driver_th.gain_w_per_c_s = 50.0f;
+
     /* Persisted config wins over the placeholders above when it is both intact
      * and valid.
      * TODO(GH#35): a rejected or unreadable store is currently silent
@@ -289,3 +325,4 @@ cfg_err_t          config_store_validate_err(void) { return s_store_val_err; }
 void config_get(ctrl_globals_t *g, ctrl_profile_t *prof) { *g = s_g; *prof = s_prof; }
 void config_get_limits(ctrl_limits_t *lim) { *lim = s_lim; }
 void config_get_thermal(ctrl_thermal_cfg_t *th) { *th = s_th; }
+void config_get_driver_thermal(ctrl_thermal_cfg_t *th) { *th = s_driver_th; }

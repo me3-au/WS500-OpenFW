@@ -31,6 +31,8 @@ typedef struct {
     ctrl_t             ctrl;
     ctrl_thermal_t     thermal;
     ctrl_thermal_cfg_t thcfg;
+    ctrl_thermal_t     driver_thermal;   /* GH#39 — driver-stage (PA3) governor */
+    ctrl_thermal_cfg_t drv_thcfg;
     ctrl_globals_t     g;
     ctrl_profile_t     prof;
     ctrl_limits_t      lim;

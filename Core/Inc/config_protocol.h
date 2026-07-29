@@ -33,4 +33,9 @@ void config_get(ctrl_globals_t *g, ctrl_profile_t *prof);
 void config_get_limits(ctrl_limits_t *lim);
 void config_get_thermal(ctrl_thermal_cfg_t *th);
 
+/* GH#39: driver-stage (PA3) thermal-governor config — a second, independent
+ * ctrl_thermal_cfg_t from config_get_thermal()'s alternator governor. See
+ * config_protocol.c's config_init() for the [SPEC-SIGNOFF] constants and why. */
+void config_get_driver_thermal(ctrl_thermal_cfg_t *th);
+
 #endif /* WS500_CONFIG_PROTOCOL_H */

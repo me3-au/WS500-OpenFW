@@ -27,6 +27,7 @@ void scn_stalled_rotor(void);
 void scn_lying_vbat(void);
 void scn_ah_revert(void);
 void scn_long_soak(void);
+void scn_driver_overtemp(void);  /* GH#39 */
 
 int main(void)
 {
@@ -45,6 +46,7 @@ int main(void)
     scn_lying_vbat();
     scn_ah_revert();
     scn_long_soak();
+    scn_driver_overtemp();
 
     printf("\n%d checks, %d failures\n", g_checks, g_fails);
     return g_fails ? 1 : 0;

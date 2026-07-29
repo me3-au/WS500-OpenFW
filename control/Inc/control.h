@@ -58,7 +58,15 @@ typedef enum {
     CTRL_BIND_ENGINE,         /* engine white-space budget (§3.5, optional) */
     CTRL_BIND_USER_CAP,       /* manual cap / quiet mode */
     CTRL_BIND_ROTOR_CLAMP,    /* field-effort clamped at duty_max (§5.1) */
-    CTRL_BIND_RUN_DETECT      /* stationary rotor — field held to the §5.2 detect budget */
+    CTRL_BIND_RUN_DETECT,     /* stationary rotor — field held to the §5.2 detect budget */
+    /* Driver-stage (FET NTC, PA3) predictive derate ceiling (§5.1, GH#39) —
+     * a second ctrl_thermal_update() instance, same shape as CTRL_BIND_THERMAL
+     * but on driver_temp_c instead of the alternator hot-spot. Appended here
+     * rather than grouped next to CTRL_BIND_THERMAL: this enum has no frozen-
+     * wire contract like ctrl_fault_bits_t, but the USB JSON telemetry line
+     * already transmits `binding` as a raw int (telemetry_json.c), so append-
+     * only avoids renumbering any int a client may already be reading. */
+    CTRL_BIND_DRIVER_THERMAL
 } ctrl_bind_src_t;
 
 /* ---- Signal-quality / mode state ------------------------------------------ */
@@ -128,8 +136,24 @@ typedef enum {
     CTRL_FAULT_THERMAL_DIVERGE = 1u << 14,  /* governor model divergence (§4.1) */
     CTRL_FAULT_WATCHDOG        = 1u << 15,  /* → field open */
     CTRL_FAULT_VSUP_IMPLAUSIBLE = 1u << 16, /* WARN: clamp supply reading distrusted (§5.1) */
-    CTRL_FAULT_BATT_TEMP_REQUIRED = 1u << 17/* FAULT/BLOCK: require_batt_temp set and
+    CTRL_FAULT_BATT_TEMP_REQUIRED = 1u << 17,/* FAULT/BLOCK: require_batt_temp set and
                                              * batt_temp_c invalid (GH#40, code 18) */
+    CTRL_FAULT_DRIVER_OVERTEMP = 1u << 18   /* CRITICAL -> OPEN: driver-stage NTC (PA3)
+                                             * at/above the stock 125 C fault point
+                                             * (§0.6 V8, GH#39, code 19). Deliberately
+                                             * NOT a merge into SELF_OVERTEMP: that bit
+                                             * stays WARN/CONTINUE and still conflates
+                                             * alt+driver readings (§9.3 D2, not resolved
+                                             * by this change — see faults.h's OPEN_MASK
+                                             * comment).
+                                             * This bit is driver-only and hard: the FET
+                                             * is the protected component, so LIMP (which
+                                             * keeps driving current through it) is wrong;
+                                             * OPEN matches the CRITICAL/latch treatment
+                                             * already used for FIELD_SHORT/FIELD_OVERCUR. */
+    /* Next free bit: 19 / wire code 20. Whoever adds it MUST also add it to
+     * CTRL_FAULT_ALL_MASK in faults.h, or the GH#41 mask-completeness test
+     * (test_faults.c) will not know the bit exists to check it. */
 } ctrl_fault_bits_t;
 
 /* ---- Live measurements the engine consumes -------------------------------- *
@@ -142,7 +166,11 @@ typedef struct {
     ctrl_isrc_tier_t isrc; /* tier amps_batt came from */
     float v_supply_v;      /* field supply voltage — sets duty_max (§5.1) */
 
-    float alt_hotspot_c;   /* estimated alternator hot-spot temp (§4.2); NAN if lost */
+    float alt_hotspot_c;   /* estimated alternator hot-spot temp (§4.2); NAN if lost.
+                            * App-assembled as the max of the finite alt-side ADC
+                            * channels (main.c, GH#43) — never sourced from a single
+                            * channel, so binding batt_temp_src to the other channel
+                            * (GH#40) cannot silently blind this input. */
     float batt_temp_c;     /* battery temp — charge-window gate only; NAN if none */
     float driver_temp_c;   /* internal driver-stage NTC (§5.1 rotor proxy) */
 
@@ -163,6 +191,14 @@ typedef struct {
 /* ---- Arbitration ceilings (Watts; INACTIVE = +inf) ------------------------ */
 typedef struct {
     float thermal_w;       /* §4 governor output */
+    float driver_thermal_w;/* §5.1 driver-stage (PA3) predictive derate ceiling,
+                            * a second ctrl_thermal_update() instance on
+                            * driver_temp_c (GH#39). Graduated: begins derating
+                            * ~100 C, at the derate floor by ~120 C — the hard
+                            * 125 C block is a separate fault (CTRL_FAULT_DRIVER_
+                            * OVERTEMP), not this ceiling. [SPEC-SIGNOFF]
+                            * bench-pending: config_get_driver_thermal()
+                            * (Core/Src/config_protocol.c) documents the values. */
     float bms_ccl_w;       /* §6.3 */
     float battery_c_w;     /* §2.1 */
     float wiring_w;        /* §2.1 */
@@ -314,5 +350,22 @@ ctrl_command_t ctrl_tick(ctrl_t *c,
 /* Helpers (inline, pure). */
 static inline float ctrl_pack_from_cell(float v_cell, uint8_t cells) { return v_cell * (float)cells; }
 static inline float ctrl_cell_from_pack(float v_pack, uint8_t cells) { return cells ? v_pack / (float)cells : NAN; }
+
+/*
+ * ctrl_nan_max2 — NaN-tolerant max of two readings (GH#43).
+ * A NaN input is ignored, never poisons the result (unlike a bare fmaxf()
+ * misuse would invite the reader to assume without checking); both-NaN -> NaN.
+ * Used by the app to fold multi-channel sensors (e.g. the two alt-side NTCs,
+ * main.c) into one estimate without losing a live channel to the other's
+ * dropout — CONTROL_SPEC §4.2's ⟦future-hw⟧ note already specifies "max() of
+ * estimates" for a two-probe install; GH#43 is the v1, single-hot-spot-model
+ * case of the same rule.
+ */
+static inline float ctrl_nan_max2(float a, float b)
+{
+    if (isnan(a)) return b;   /* b may itself be NaN -> both-NaN -> NaN, correct */
+    if (isnan(b)) return a;
+    return fmaxf(a, b);
+}
 
 #endif /* WS500_CONTROL_H */

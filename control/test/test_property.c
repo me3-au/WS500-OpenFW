@@ -352,7 +352,7 @@ static void p2b_vsup_residuals(void)
 /* =========================================================================== *
  * P3 — arbitration: min(), monotonicity in every ceiling
  * =========================================================================== */
-#define N_CEIL 9
+#define N_CEIL 10
 
 static float ceil_get(const ctrl_ceilings_t *c, int i)
 {
@@ -361,6 +361,7 @@ static float ceil_get(const ctrl_ceilings_t *c, int i)
     case 2: return c->battery_c_w;    case 3: return c->wiring_w;
     case 4: return c->alt_absolute_w; case 5: return c->alt_capability_w;
     case 6: return c->belt_w;         case 7: return c->engine_w;
+    case 8: return c->driver_thermal_w;  /* GH#39 */
     default: return c->user_cap_w;
     }
 }
@@ -371,6 +372,7 @@ static void ceil_set(ctrl_ceilings_t *c, int i, float v)
     case 2: c->battery_c_w = v; break;    case 3: c->wiring_w = v; break;
     case 4: c->alt_absolute_w = v; break; case 5: c->alt_capability_w = v; break;
     case 6: c->belt_w = v; break;         case 7: c->engine_w = v; break;
+    case 8: c->driver_thermal_w = v; break;  /* GH#39 */
     default: c->user_cap_w = v; break;
     }
 }
@@ -381,6 +383,7 @@ static ctrl_bind_src_t ceil_src(int i)
     case 2: return CTRL_BIND_BATTERY_C;    case 3: return CTRL_BIND_WIRING;
     case 4: return CTRL_BIND_ALT_ABSOLUTE; case 5: return CTRL_BIND_ALT_CAPABILITY;
     case 6: return CTRL_BIND_BELT;         case 7: return CTRL_BIND_ENGINE;
+    case 8: return CTRL_BIND_DRIVER_THERMAL;  /* GH#39 */
     default: return CTRL_BIND_USER_CAP;
     }
 }
@@ -613,9 +616,14 @@ static void p4_engine_grid(void)
  * =========================================================================== */
 static void p5_fault_latching(void)
 {
+    /* Every member of CTRL_FAULT_OPEN_MASK. Kept in step with faults.h by
+     * hand — the count below is derived, never literal, because this list
+     * lagging the mask is exactly how GH#39's new OPEN bit went unswept. */
     static const uint32_t OPEN_BITS[] = {
         CTRL_FAULT_OVERVOLTAGE, CTRL_FAULT_FIELD_SHORT, CTRL_FAULT_FIELD_OVERCUR,
-        CTRL_FAULT_OVERSPEED, CTRL_FAULT_WATCHDOG, CTRL_FAULT_BATT_DTDT };
+        CTRL_FAULT_OVERSPEED, CTRL_FAULT_WATCHDOG, CTRL_FAULT_BATT_DTDT,
+        CTRL_FAULT_DRIVER_OVERTEMP /* GH#39 */ };
+    const int N_OPEN_BITS = (int)(sizeof OPEN_BITS / sizeof OPEN_BITS[0]);
     static const uint32_t CLEARABLE[] = {
         CTRL_FAULT_FIELD_OPEN, CTRL_FAULT_LOST_BMS, CTRL_FAULT_IMPLAUSIBLE_SHUNT,
         CTRL_FAULT_LOST_VBAT_SENSE, CTRL_FAULT_THERMAL_DIVERGE,
@@ -632,7 +640,7 @@ static void p5_fault_latching(void)
     ctrl_ceilings_t c = test_ceil_none();
 
     /* Every OPEN bit, injected through ext_faults for one tick, then removed. */
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < N_OPEN_BITS; i++) {
         ctrl_t e; ctrl_init(&e);
         ctrl_measured_t ok = prop_measured(16, 3.35f);
         ctrl_measured_t bad = ok; bad.ext_faults = OPEN_BITS[i];
@@ -684,12 +692,26 @@ static void p5_fault_latching(void)
     prop_report(&cleared);
     prop_report(&reset_clears);
 
-    /* Disposition/severity are total functions over the whole 18-bit fault
-     * space (GH#40 added CTRL_FAULT_BATT_TEMP_REQUIRED at bit 17). */
+    /* Disposition/severity are total functions over the whole declared fault
+     * space (GH#39 added CTRL_FAULT_DRIVER_OVERTEMP at bit 18; GH#40 added
+     * CTRL_FAULT_BATT_TEMP_REQUIRED at bit 17). The bound is derived from
+     * CTRL_FAULT_ALL_MASK rather than written as a literal width: a hardcoded
+     * `1u << 18` silently stopped covering the newest bit the moment one was
+     * appended, which is the same rot GH#41's mask-completeness test exists
+     * to kill — see faults.h. */
     {
         prop_inv_t disp_total;
         prop_inv_init(&disp_total, "P5 disposition/severity agree over all fault sets");
-        for (uint32_t f = 0; f < (1u << 18); f++) {
+        /* Exhaustive over 2^n sets, so n cannot grow without bound: 22 bits is
+         * ~4.2 M iterations, already the practical ceiling for a CI sweep. If
+         * a future fault bit pushes past it, this reports rather than silently
+         * under-covering — swap to sampled coverage at that point. */
+        uint32_t sweep_bits = 0u;
+        while (sweep_bits < 22u && ((uint32_t)CTRL_FAULT_ALL_MASK >> sweep_bits) != 0u) sweep_bits++;
+        prop_note(&disp_total, ((uint32_t)CTRL_FAULT_ALL_MASK >> sweep_bits) == 0u, NULL,
+                  "CTRL_FAULT_ALL_MASK=0x%08lx exceeds the %u-bit exhaustive sweep",
+                  (unsigned long)CTRL_FAULT_ALL_MASK, sweep_bits);
+        for (uint32_t f = 0; f < (1u << sweep_bits); f++) {
             const ctrl_disposition_t d = ctrl_fault_disposition(f);
             const ctrl_severity_t    s = ctrl_fault_severity(f);
             const int open_bits  = (f & CTRL_FAULT_OPEN_MASK) != 0;

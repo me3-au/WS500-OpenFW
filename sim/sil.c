@@ -65,6 +65,23 @@ void sil_init(sil_t *s, uint32_t seed, float soc0)
     s->thcfg.gain_w_per_c_s = 5.0f;
     ctrl_thermal_init(&s->thermal, &s->thcfg);
 
+    /* Driver-stage governor (§5.1, GH#39). target_c/hard_c match the
+     * [SPEC-SIGNOFF] constants in Core/Src/config_protocol.c's
+     * config_get_driver_thermal() (the numbers under safety review); floor/
+     * ceiling/gain are independently sized for THIS plant's ~8 kW power
+     * scale — same as the alternator governor's SIL config immediately
+     * above already does relative to config_get_thermal()'s firmware
+     * defaults — so the scenario converges within a reasonable number of
+     * simulated minutes instead of the real (much slower/gentler) firmware
+     * gain. */
+    s->drv_thcfg.tau_s          = 30.0f;
+    s->drv_thcfg.target_c       = 100.0f;
+    s->drv_thcfg.hard_c         = 120.0f;
+    s->drv_thcfg.derate_floor_w = 500.0f;
+    s->drv_thcfg.ceiling_max_w  = 12000.0f;
+    s->drv_thcfg.gain_w_per_c_s = 5.0f;
+    ctrl_thermal_init(&s->driver_thermal, &s->drv_thcfg);
+
     /* World defaults. */
     s->engine_rpm   = 2800.0f;
     s->house_load_w = 0.0f;
@@ -115,7 +132,7 @@ static void sil_invariants(sil_t *s)
     inv(s, c->state == CTRL_STANDBY || c->state == CTRL_BULK || c->state == CTRL_FLOAT,
         "state valid");
     inv(s, c->standby_reason <= CTRL_SB_FAULT, "standby_reason valid");
-    inv(s, c->binding <= CTRL_BIND_RUN_DETECT, "binding valid");
+    inv(s, c->binding <= CTRL_BIND_DRIVER_THERMAL, "binding valid");
     inv(s, !c->field_open || c->field_duty == 0.0f, "field_open implies zero duty");
 
     /* Plant sanity. */
@@ -190,7 +207,8 @@ void sil_step(sil_t *s)
 
     /* 4) Ceilings: hardware limit set + thermal governor + scenario inputs. */
     ctrl_ceilings_t ceil = {
-        .thermal_w = CTRL_CEILING_INACTIVE, .bms_ccl_w = CTRL_CEILING_INACTIVE,
+        .thermal_w = CTRL_CEILING_INACTIVE, .driver_thermal_w = CTRL_CEILING_INACTIVE,
+        .bms_ccl_w = CTRL_CEILING_INACTIVE,
         .battery_c_w = CTRL_CEILING_INACTIVE, .wiring_w = CTRL_CEILING_INACTIVE,
         .alt_absolute_w = CTRL_CEILING_INACTIVE,
         .alt_capability_w = CTRL_CEILING_INACTIVE,
@@ -199,6 +217,10 @@ void sil_step(sil_t *s)
     };
     ctrl_limits_apply(&ceil, &s->lim, &s->g, r.vbat_v);
     ceil.thermal_w  = ctrl_thermal_update(&s->thermal, &s->thcfg, r.alt_temp_c, dt_s);
+    /* GH#39: driver-stage derate ceiling, same shape as the alternator
+     * governor above, on r.driver_temp_c instead. */
+    ceil.driver_thermal_w = ctrl_thermal_update(&s->driver_thermal, &s->drv_thcfg,
+                                                r.driver_temp_c, dt_s);
     ceil.bms_ccl_w  = s->bms_ccl_w;
     ceil.user_cap_w = s->user_cap_w;
     ceil.engine_w   = s->engine_w;

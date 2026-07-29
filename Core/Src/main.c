@@ -145,6 +145,13 @@ int main(void)
     ctrl_thermal_cfg_t thcfg; config_get_thermal(&thcfg);
     ctrl_thermal_t     thermal; ctrl_thermal_init(&thermal, &thcfg);
 
+    /* GH#39: second governor instance for the driver-stage (PA3) NTC — same
+     * pure ctrl_thermal_update() machinery, a different config and a
+     * different persistent state, feeding ceil.driver_thermal_w instead of
+     * ceil.thermal_w. */
+    ctrl_thermal_cfg_t dthcfg; config_get_driver_thermal(&dthcfg);
+    ctrl_thermal_t     driver_thermal; ctrl_thermal_init(&driver_thermal, &dthcfg);
+
     const float dt_s = (float)LOOP_PERIOD_MS / 1000.0f;
     uint32_t next = HAL_GetTick();
     uint32_t tick_count = 0u;
@@ -199,6 +206,17 @@ int main(void)
                 }
             }
 
+            /* GH#43: the alternator side carries TWO NTC channels (alt_temp_c,
+             * alt_temp2_c) whenever batt_temp_src doesn't claim one of them for
+             * the battery probe (sensors.c). Feeding the fault input / thermal
+             * governor from channel A alone silently blinded alternator
+             * over-temp protection the moment batt_temp_src=adc_a moved the
+             * live alt probe to channel B (CONTROL_SPEC §4.2). Both call sites
+             * below now take the max of whichever channel(s) are finite —
+             * NaN-tolerant so a channel stolen by batt_temp_src (which reads
+             * NaN on the alt side, sensors.c) never poisons the other. */
+            const float alt_hotspot_c = ctrl_nan_max2(r.alt_temp_c, r.alt_temp2_c);
+
             /* Assemble the control input from physical readings. Signals from
              * not-yet-implemented drivers use conservative fail-safe placeholders. */
             ctrl_measured_t m = {
@@ -208,7 +226,7 @@ int main(void)
                 .watts_batt   = ina2xx_power_w(),
                 .isrc         = CTRL_ISRC_NONE,         /* TODO: from ShuntAtBat config */
                 .v_supply_v   = r.vbat_pack_v,          /* TODO: measure field supply */
-                .alt_hotspot_c= r.alt_temp_c,           /* no hot-spot model yet */
+                .alt_hotspot_c= alt_hotspot_c,          /* GH#43; no hot-spot model yet */
                 .batt_temp_c  = r.batt_temp_c,
                 .driver_temp_c= r.driver_temp_c,
                 .rpm          = stator_rpm_val,
@@ -230,10 +248,11 @@ int main(void)
                 .ext_faults   = app_ext_faults(),
             };
 
-            /* Build arbitration ceilings: hardware limit set + thermal governor.
+            /* Build arbitration ceilings: hardware limit set + thermal governors.
              * (BMS/engine/belt/capability ceilings land with their subsystems.) */
             ctrl_ceilings_t ceil = {
-                .thermal_w = CTRL_CEILING_INACTIVE, .bms_ccl_w = CTRL_CEILING_INACTIVE,
+                .thermal_w = CTRL_CEILING_INACTIVE, .driver_thermal_w = CTRL_CEILING_INACTIVE,
+                .bms_ccl_w = CTRL_CEILING_INACTIVE,
                 .battery_c_w = CTRL_CEILING_INACTIVE, .wiring_w = CTRL_CEILING_INACTIVE,
                 .alt_absolute_w = CTRL_CEILING_INACTIVE, .alt_capability_w = CTRL_CEILING_INACTIVE,
                 .belt_w = CTRL_CEILING_INACTIVE, .engine_w = CTRL_CEILING_INACTIVE,
@@ -241,7 +260,12 @@ int main(void)
             };
             ctrl_limits_t lim; config_get_limits(&lim);
             ctrl_limits_apply(&ceil, &lim, &g, r.vbat_pack_v);
-            ceil.thermal_w = ctrl_thermal_update(&thermal, &thcfg, r.alt_temp_c, dt_s);
+            ceil.thermal_w        = ctrl_thermal_update(&thermal, &thcfg, alt_hotspot_c, dt_s);
+            /* GH#39: driver-stage (PA3) predictive derate, a second governor
+             * instance on driver_temp_c — see config_get_driver_thermal() for
+             * the [SPEC-SIGNOFF] constants. The 125 C hard block is a separate
+             * fault (CTRL_FAULT_DRIVER_OVERTEMP, control.c), not this ceiling. */
+            ceil.driver_thermal_w = ctrl_thermal_update(&driver_thermal, &dthcfg, r.driver_temp_c, dt_s);
 
             ctrl_command_t cmd = ctrl_tick(&ctrl, &m, &ceil, &prof, &g, LOOP_PERIOD_MS);
             if (cmd.field_open) field_drive_fault_cutoff();

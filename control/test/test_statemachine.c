@@ -409,4 +409,73 @@ void test_statemachine(void)
         CHECK(cmd.state == CTRL_BULK);
         CHECK(!cmd.field_open);
     }
+
+    /* 21) GH#39: driver-stage thermal ceiling actually reduces commanded power.
+     *     This is arbitration-level coverage (test_arbitration.c already checks
+     *     ctrl_arbitrate() in isolation); here the ceiling is driven through a
+     *     full ctrl_tick() to confirm the reduced ceiling actually reaches
+     *     field_duty, not just cmd.binding_w. The static M()/G() fixture (fixed
+     *     watts_batt, no plant feedback) saturates the derate all the way to
+     *     zero rather than settling at a graduated partial value — that dynamic
+     *     "settles partway down" behavior is what sim/scenarios.c's
+     *     scn_driver_overtemp exercises against the closed-loop plant. */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_measured_t m = M(3.30f);           /* below CV -> wants max effort */
+        ctrl_ceilings_t c_hot = c;               /* driver ceiling well below stage power */
+        c_hot.driver_thermal_w = 50.0f;          /* << g.max_charge_power_w (1000 W) */
+        ctrl_command_t cmd_hot = {0};
+        for (int i = 0; i < 50; i++) cmd_hot = ctrl_tick(&e, &m, &c_hot, &p, &g, 100);
+
+        ctrl_t e2; ctrl_init(&e2);
+        ctrl_command_t cmd_cold = {0};
+        for (int i = 0; i < 50; i++) cmd_cold = ctrl_tick(&e2, &m, &c, &p, &g, 100);
+
+        CHECK(!cmd_hot.field_open);                      /* derate, not a cutoff */
+        CHECK(cmd_hot.binding == CTRL_BIND_DRIVER_THERMAL);
+        CHECK(cmd_hot.field_duty < cmd_cold.field_duty);  /* measurably less power */
+        CHECK_FEQ(cmd_hot.binding_w, 50.0f, 0.01f);
+    }
+
+    /* 22) GH#39: 125 C hard block. CTRL_FAULT_DRIVER_OVERTEMP is CRITICAL/OPEN
+     *     (faults.h) — field opens immediately, same shape as case 3
+     *     (OVERVOLTAGE), and — unlike the BLOCK-class battery-temp faults in
+     *     cases 4/20 — does NOT auto-resume when the reading cools: OPEN-class
+     *     faults latch until reset (control.c: `faults = c->faults &
+     *     CTRL_FAULT_OPEN_MASK` at the top of every tick). A switch that hit
+     *     125 C needs a human, not a cooldown, before it drives again. */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_measured_t m = M(3.30f);
+        m.driver_temp_c = 125.0f;
+        ctrl_command_t cmd = ctrl_tick(&e, &m, &c, &p, &g, 100);
+        CHECK(cmd.faults & CTRL_FAULT_DRIVER_OVERTEMP);
+        CHECK(cmd.state == CTRL_STANDBY);
+        CHECK(cmd.standby_reason == CTRL_SB_FAULT);
+        CHECK(cmd.field_open);
+        CHECK_FEQ(cmd.field_duty, 0.0f, 1e-6f);
+
+        /* Cools back to a normal reading -> the OPEN latch holds (no reset). */
+        ctrl_measured_t cool = m; cool.driver_temp_c = 40.0f;
+        for (int i = 0; i < 50; i++) cmd = ctrl_tick(&e, &cool, &c, &p, &g, 100);
+        CHECK(cmd.faults & CTRL_FAULT_DRIVER_OVERTEMP);
+        CHECK(cmd.field_open);
+    }
+
+    /* 23) GH#43 regression, end-to-end: one alt-side channel NaN must not
+     *     blind alternator over-temp protection. test_nan_max.c already
+     *     proves ctrl_nan_max2()'s math in isolation; this closes the loop
+     *     through a real ctrl_tick() the way main.c actually assembles
+     *     alt_hotspot_c (`ctrl_nan_max2(alt_temp_c, alt_temp2_c)`, GH#43) —
+     *     the exact scenario CTRL_BATT_TEMP_ADC_A (GH#40) creates: channel A
+     *     goes NaN (claimed by batt_temp_src) while channel B still reports
+     *     the alternator. */
+    {
+        ctrl_t e; ctrl_init(&e);
+        ctrl_measured_t m = M(3.30f);
+        m.alt_hotspot_c = ctrl_nan_max2(NAN, 130.0f);   /* channel A stolen, B hot */
+        CHECK(!isnan(m.alt_hotspot_c));                 /* sanity: the fold didn't lose it */
+        ctrl_command_t cmd = ctrl_tick(&e, &m, &c, &p, &g, 100);
+        CHECK(cmd.faults & CTRL_FAULT_SELF_OVERTEMP);   /* still fires from channel B */
+    }
 }

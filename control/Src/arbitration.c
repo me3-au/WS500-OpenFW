@@ -13,6 +13,7 @@ ctrl_arb_t ctrl_arbitrate(float stage_w, const ctrl_ceilings_t *c)
      * are ignored by construction. */
     #define CONSIDER(w, s)  do { if ((w) < r.watts) { r.watts = (w); r.src = (s); } } while (0)
     CONSIDER(c->thermal_w,        CTRL_BIND_THERMAL);
+    CONSIDER(c->driver_thermal_w, CTRL_BIND_DRIVER_THERMAL);  /* §5.1, GH#39 */
     CONSIDER(c->bms_ccl_w,        CTRL_BIND_BMS);
     CONSIDER(c->battery_c_w,      CTRL_BIND_BATTERY_C);
     CONSIDER(c->wiring_w,         CTRL_BIND_WIRING);

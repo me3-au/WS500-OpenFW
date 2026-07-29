@@ -50,4 +50,11 @@ void test_arbitration(void)
     r = ctrl_arbitrate(9999.0f, &c);
     CHECK(r.src == CTRL_BIND_BELT);
     CHECK_FEQ(r.watts, 123.0f, 0.01f);
+
+    /* GH#39: driver-stage thermal ceiling participates in the min() like any
+     * other ceiling, and is distinguishable from the alternator's CTRL_BIND_THERMAL. */
+    c = test_ceil_none(); c.driver_thermal_w = 77.0f; c.thermal_w = 500.0f;
+    r = ctrl_arbitrate(9999.0f, &c);
+    CHECK(r.src == CTRL_BIND_DRIVER_THERMAL);
+    CHECK_FEQ(r.watts, 77.0f, 0.01f);
 }

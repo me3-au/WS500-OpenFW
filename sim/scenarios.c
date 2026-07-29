@@ -762,3 +762,86 @@ void scn_long_soak(void)
            bulk_entries, float_entries, standby_entries,
            (double)s.plant.soc, (double)s.max_duty_seen);
 }
+
+/* --------------------------------------------------------------------------
+ * 9) Driver-stage over-temp (§5.1, GH#39): the FET/driver NTC (PA3) is the
+ *    only guard the field switch has (BKIN unrouted, §0.6 V1+V2; no field-
+ *    current sense, §0.6 V4) — this is where "does the protection actually
+ *    bite under transient abuse" gets answered for it, the way scn_temperature
+ *    already answers it for the alternator governor. The plant's physical
+ *    driver_temp_c model can't reach these temperatures under a clamp-
+ *    respecting duty (I_f is capped near the ~3.4 A calibration point, so
+ *    I_f^2 heating tops out around 45 C, scn_plant_calibration) — exactly why
+ *    a real guard is needed rather than relying on "it can't get that hot":
+ *    a stuck fan or degraded heatsink is a cooling-path failure, not a
+ *    current-path one, and this model has no cooling-failure knob. So, like
+ *    scn_temperature's block (d), the sensor CHANNEL is overridden directly
+ *    (plant_inject_t) to inject the fault condition regardless of the
+ *    physical model, and the closed loop is left to react for real.
+ * -------------------------------------------------------------------------- */
+void scn_driver_overtemp(void)
+{
+    banner("driver_overtemp (§5.1 graduated derate + 125 C hard block, GH#39)");
+
+    /* a) Healthy baseline: settle into BULK at cruise RPM, record power. */
+    sil_t s; sil_init(&s, 0xD817E001u, 0.50f);
+    s.engine_rpm = 2800.0f;
+    for (uint32_t i = 0; i < 60u * 100u; i++) { s.plant.soc = 0.50f; sil_step(&s); }
+    CHECK(s.cmd.state == CTRL_BULK);
+    CHECK(!s.cmd.field_open);
+    const float w_baseline = s.plant.i_batt_a * s.plant.vbus_v;
+    CHECK(w_baseline > 3000.0f);              /* genuinely charging, not stalled */
+    CHECK(s.inv_violations == 0);
+
+    /* b) Onset of derate (110 C, between target 100 and hard 120): the
+     *    governor engages and power is measurably reduced -- a derate, not a
+     *    cutoff: no fault yet, field still driving. */
+    s.inj.override_en[PS_DRV_T] = true;
+    s.inj.override_v[PS_DRV_T]  = 110.0f;
+    bool bound_driver_thermal = false;
+    for (uint32_t i = 0; i < 5u * 60u * 100u; i++) {   /* 5 min */
+        s.plant.soc = 0.50f;
+        sil_step(&s);
+        if (s.cmd.binding == CTRL_BIND_DRIVER_THERMAL) bound_driver_thermal = true;
+    }
+    CHECK(bound_driver_thermal);                       /* governor engaged, telemetered */
+    CHECK(!s.cmd.field_open);
+    CHECK(!(s.cmd.faults & CTRL_FAULT_DRIVER_OVERTEMP));
+    const float w_derated = s.plant.i_batt_a * s.plant.vbus_v;
+    CHECK(w_derated < w_baseline * 0.5f);              /* the derate actually bites */
+    CHECK(s.inv_violations == 0);
+
+    /* c) At the hard_c edge (120 C, where WARN already fires, control.c
+     *    DRIVER_HOT_HARD_C): ceiling pulled to the derate floor -- "fast pull
+     *    to floor" (§4.2) -- still no hard fault, still no cutoff. */
+    s.inj.override_v[PS_DRV_T] = 120.0f;
+    for (uint32_t i = 0; i < 60u * 100u; i++) { s.plant.soc = 0.50f; sil_step(&s); }
+    CHECK(!(s.cmd.faults & CTRL_FAULT_DRIVER_OVERTEMP));
+    CHECK(!s.cmd.field_open);
+    const float w_floor = s.plant.i_batt_a * s.plant.vbus_v;
+    CHECK(w_floor <= s.drv_thcfg.derate_floor_w * 1.5f + 200.0f);
+    CHECK(s.inv_violations == 0);
+
+    /* d) 125 C: hard block. CTRL_FAULT_DRIVER_OVERTEMP fires and the field
+     *    opens immediately -- matching, never weaker than, stock's single
+     *    125 C fault (§0.6 V8, `0x4029`). */
+    s.inj.override_v[PS_DRV_T] = 125.0f;
+    for (uint32_t i = 0; i < 10u * 100u; i++) { s.plant.soc = 0.50f; sil_step(&s); }
+    CHECK(s.cmd.faults & CTRL_FAULT_DRIVER_OVERTEMP);
+    CHECK(s.cmd.field_open);
+    CHECK(s.applied_duty == 0.0f);
+    CHECK(s.inv_violations == 0);
+
+    /* e) Cools back to a healthy reading -- the OPEN-class latch does NOT
+     *    auto-resume (control.c: OPEN-class faults persist until reset, same
+     *    as OVERVOLTAGE/WATCHDOG/etc.). A switch that hit 125 C needs
+     *    intervention, not a cooldown -- unlike the BLOCK-class battery-temp
+     *    faults scn_temperature() (a)/(b) exercise elsewhere in this file,
+     *    which DO auto-resume by design (§9.1 D7). */
+    s.inj.override_en[PS_DRV_T] = false;
+    for (uint32_t i = 0; i < 60u * 100u; i++) { s.plant.soc = 0.50f; sil_step(&s); }
+    CHECK(s.cmd.faults & CTRL_FAULT_DRIVER_OVERTEMP);
+    CHECK(s.cmd.field_open);
+    CHECK(s.applied_duty == 0.0f);
+    CHECK(s.inv_violations == 0);
+}

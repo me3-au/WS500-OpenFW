@@ -573,23 +573,27 @@ before any limit is hit.
     (`batt_temp_src: none`, `require_batt_temp: false`) behaves identically to
     the pre-GH#40 firmware: it reports the battery-temp input as *unavailable*
     and never reports a window as *satisfied*.
-  - ⚠ **Alternator thermal protection is NOT unaffected by the choice of
-    channel** (safety review, 2026-07-28 — an earlier draft of this section
-    claimed it was, and that claim was wrong). The app feeds both the
-    `alt_hotspot_c` fault input and the §4.1 thermal governor from
-    **channel A only** (`main.c`); `alt_temp2_c` is currently consumed
-    nowhere. So binding **`adc_b`** is safe — channel A stays the alternator
-    probe — but binding **`adc_a`** moves the alternator probe to the unread
-    channel, which silently means `CTRL_FAULT_SELF_OVERTEMP` can never fire
-    from the alternator NTC and the governor returns `CTRL_CEILING_INACTIVE`
-    forever. No NaN reaches a duty command; the loss is silent, which is what
-    makes it dangerous. Only the PA3 driver-stage NTC would remain — a
-    different device on a different thermal path, and itself only WARN-class
-    (§5.1 `[SPEC-GAP]`, GH#39).
-    **`adc_a` must not be configured on the live unit until the app derives
-    `alt_hotspot_c` from the max of the finite alternator-side channels.**
-    That fix also closes the pre-existing gap that `alt_temp2_c` is read and
-    then discarded. Tracked as a hard precondition on the bench binding step.
+  - **Alternator thermal protection is unaffected by the choice of channel
+    (fixed 2026-07-28, GH#43).** An earlier draft of this section found the
+    app fed both the `alt_hotspot_c` fault input and the §4.1 thermal
+    governor from channel A only (`main.c`), with `alt_temp2_c` consumed
+    nowhere — so binding **`adc_a`** would have silently moved the alternator
+    probe to the unread channel, and `CTRL_FAULT_SELF_OVERTEMP` could never
+    have fired from the alternator NTC while the governor returned
+    `CTRL_CEILING_INACTIVE` forever. That gap is closed: both call sites in
+    `main.c` now derive their hot-spot input from `ctrl_nan_max2(alt_temp_c,
+    alt_temp2_c)` (`control.h`) — the max of whichever alt-side channel(s)
+    are finite, NaN-tolerant so a channel `batt_temp_src` claims for the
+    battery probe never blinds the other. Binding **either** `adc_a` or
+    `adc_b` to `batt_temp_src` now leaves alternator thermal protection
+    intact; the `adc_a` prohibition that stood against the bench binding step
+    (issue #8) is lifted here — **the STAGE_A_RUNSHEET.md / PROJECT_PLAN.md
+    text recording that prohibition is a separate file this change does not
+    touch and still needs updating to match.** Regression coverage:
+    `control/test/test_nan_max.c` (the NaN-tolerant math) and
+    `control/test/test_statemachine.c` (one alt channel NaN, protection still
+    fires from the other) — see faults.h/control.h for the driver-stage NTC's
+    own protection state, since GH#39 changed it too.
 
 ---
 
@@ -636,24 +640,49 @@ is recorded as the ⟦future-hw⟧ upgrade path.
   the charge-voltage rise; the dynamic clamp cannot. `rotor_rated_v` defaults
   to **12 V whenever the system is 48 V**; confirmed at commissioning like
   `cells_series`.
-- **Driver-stage NTC as proxy guard.** The internal driver-temp sensor (PA3,
-  β3380 — §0.6 V8 confirms this is the FET/driver channel and that stock faults
-  it at 125 °C) heats with field current and with cooling failures — a usable
-  *alarm and derate trigger* for the switch stage, though not a rotor model.
-  Sustained driver over-temp pulls field effort down and raises WARN.
-  **[SPEC-GAP] The derate half of that sentence is NOT IMPLEMENTED** (safety
-  review, 2026-07-28): `control.c` raises `CTRL_FAULT_SELF_OVERTEMP` at 120 °C,
-  but that bit lives in `CTRL_FAULT_WARN_MASK` — disposition CONTINUE — and no
-  arbitration ceiling consumes `driver_temp_c` (the thermal governor derates on
-  the *alternator* probe only). So today a cooking field switch sets a bit and
-  the field keeps driving at full commanded duty. That is **weaker than stock**,
-  which faults at 125 °C, and it matters far more now that BKIN is refuted: with
-  no hardware trip and no rotor current sense, this NTC is the only guard the
-  switch stage has. Must be closed before any sustained-load bench run — see the
-  tracking issue. This
-  closes the "§5.1 rests on an *inferred* internal-NTC channel" open item that
-  PROJECT_PLAN §0.6 recorded against this section: the channel is confirmed,
-  and it is the driver stage, not the battery.
+- **Driver-stage NTC as proxy guard (derate implemented, 2026-07-28, GH#39).**
+  The internal driver-temp sensor (PA3, β3380 — §0.6 V8 confirms this is the
+  FET/driver channel and that stock faults it at 125 °C) heats with field
+  current and with cooling failures — a usable *alarm and derate trigger* for
+  the switch stage, though not a rotor model. Sustained driver over-temp now
+  pulls field effort down AND raises WARN, closing the gap a 2026-07-28 safety
+  review found (`control.c` raised `CTRL_FAULT_SELF_OVERTEMP` at 120 °C into
+  `CTRL_FAULT_WARN_MASK` — disposition CONTINUE — while no arbitration ceiling
+  consumed `driver_temp_c` at all, so a cooking field switch set a bit and the
+  field kept driving at full commanded duty; weaker than stock, and it mattered
+  more with BKIN refuted and no rotor-current sense — this NTC is the only
+  guard the switch stage has). Two mechanisms, layered:
+  - **Graduated derate**, `Core/Src/config_protocol.c`'s
+    `config_get_driver_thermal()` feeding `ctrl_ceilings_t.driver_thermal_w` —
+    a second instance of the §4.1 predictive governor (`thermal.c`) on
+    `driver_temp_c`, arbitrated into the power `min()` like every other
+    ceiling (`CTRL_BIND_DRIVER_THERMAL`), so it is reported the same way.
+    **[SPEC-SIGNOFF] pending bench**, all four values: onset `target_c` 100 °C,
+    at the derate floor by `hard_c` 120 °C (the point the existing WARN
+    already fires), `derate_floor_w` 100 W (reused from the alternator
+    governor's floor, no driver-specific number to prefer), `gain_w_per_c_s`
+    50 (also reused — the target-to-hard span here, 20 °C, is comparable to
+    the alternator governor's 15 °C). `tau_s` 30 s is the one value NOT
+    copied from the alternator governor (300 s): a FET/heatsink is a much
+    smaller thermal mass, so materially shorter is directionally right, but
+    it is a guess, not a measurement — the highest-uncertainty constant here,
+    flagged for bench characterization before any sustained-load run.
+    None of these four numbers come from a thermal model of this board — we
+    have none — they exist only to shape a derate ahead of the hard block
+    below, bracketing the one number RE actually gave us.
+  - **Hard block at 125 °C** — `CTRL_FAULT_DRIVER_OVERTEMP` (§9.1 code 19),
+    a fault bit **separate from** `SELF_OVERTEMP`, in `CTRL_FAULT_OPEN_MASK`:
+    CRITICAL, latches until reset, field opens immediately. Matches — never
+    weaker than — stock's single 125 °C fault (`0x4029`). Deliberately not a
+    disposition change to `SELF_OVERTEMP`: that bit stays WARN/CONTINUE and
+    still conflates the alternator and driver readings in one bit (§9.3 D2,
+    **not resolved by this change** — see the D2 entry for why a full split
+    was judged out of scope here).
+  - Both are `driver_temp_c`-only; `SELF_OVERTEMP`'s existing 120 °C WARN
+    (both alt-side and driver readings) is unchanged.
+  This also closes the "§5.1 rests on an *inferred* internal-NTC channel" open
+  item that PROJECT_PLAN §0.6 recorded against this section: the channel is
+  confirmed, and it is the driver stage, not the battery.
 - **Last-resort field cutoff is software** — the §7 R0 `enter_safe_state()`
   funnel clears `BDTR.MOE`, zeroes the duty and drives the pin low. There is no
   comparator beneath it (§0.1). Two design obligations follow, and neither is
@@ -1105,8 +1134,9 @@ line, the proprietary fast-packet, and the §7 R2 crash record carry the raw
 u32 bitfield (bit = code − 1); the LED (§9.2) blinks the same code.
 
 **Stability contract: wire codes are stable forever.** New faults append at
-the next free bit (code 18 = bit 17, …). Codes are never reused, renumbered,
-or reordered by insertion; retiring a fault retires its code permanently.
+the next free bit (code 19 = bit 18 landed here, GH#39; next free is code 20 =
+bit 19). Codes are never reused, renumbered, or reordered by insertion;
+retiring a fault retires its code permanently.
 Code 0 = no fault. Renaming a fault's *text* is allowed (text is descriptive);
 renumbering is a protocol break and is forbidden.
 
@@ -1121,10 +1151,10 @@ discrepancy is listed in §9.3 instead of being silently harmonized.
 | 2 | 1 | `FIELD_SHORT` | CRITICAL | OPEN | until reset | none — reserved (no field-current sense on v1; D3) | Field driver short - field opened | 2S |
 | 3 | 2 | `FIELD_OPEN` | WARN | none | no | none — reserved (D3) | Field circuit open | 3S |
 | 4 | 3 | `FIELD_OVERCUR` | CRITICAL | OPEN | until reset | none — reserved (BKIN refuted §0.6 V1+V2; D3) | Field overcurrent - field opened | 4S |
-| 5 | 4 | `SELF_OVERTEMP` | WARN | none ⚠(D2, GH#39) | no | alt hot-spot ≥ 120 °C **or** driver NTC ≥ 120 °C (`control.c`; conflated — D2) | Regulator over temperature | 5S |
+| 5 | 4 | `SELF_OVERTEMP` | WARN | none ⚠(D2) | no | alt hot-spot ≥ 120 °C **or** driver NTC ≥ 120 °C (`control.c`; conflated — D2, not resolved by GH#39) | Regulator over temperature | 5S |
 | 6 | 5 | `OVERSPEED` | CRITICAL | OPEN | until reset | none — no overspeed threshold parameter exists (D3) | Alternator overspeed - field opened | 6S |
-| 7 | 6 | `SHUNT_OPEN` | INFO ⚠(D1) | none ⚠(D1) | no | none (D3) | Current shunt open circuit | 7S |
-| 8 | 7 | `SHUNT_REVERSED` | INFO ⚠(D1) | none ⚠(D1) | no | none (D3) | Current shunt reversed | 8S |
+| 7 | 6 | `SHUNT_OPEN` | FAULT | LIMP (auto-recover) | no | none (D3) | Current shunt open circuit | 7S |
+| 8 | 7 | `SHUNT_REVERSED` | FAULT | LIMP (auto-recover) | no | none (D3) | Current shunt reversed | 8S |
 | 9 | 8 | `BATT_DTDT` | CRITICAL | OPEN | until reset | none — no rate-of-change (dT/dt) detector implemented (D3); a `batt_temp_c` source may now be configured (GH#40) but this bit does not compute a derivative from it | Battery heating too fast - charge aborted | 9S |
 | 10 | 9 | `BATT_LOWTEMP` | FAULT | BLOCK charge (auto-resume) | no | `control.c` ≤ 0 °C — arms once `batt_temp_src` names a channel (GH#40, default `none` = unarmed) | Battery too cold to charge | 1L |
 | 11 | 10 | `BATT_HIGHTEMP` | FAULT | BLOCK charge (auto-resume) | no | `control.c` ≥ 55 °C — arms once `batt_temp_src` names a channel (GH#40, default `none` = unarmed) | Battery too hot - charge aborted | 1L+1S |
@@ -1135,6 +1165,7 @@ discrepancy is listed in §9.3 instead of being silently harmonized.
 | 16 | 15 | `WATCHDOG` | CRITICAL | OPEN | until reset | ≥3 consecutive watchdog/fault boots (§7 R1, `main.c`) | Watchdog reset - field opened | 1L+6S |
 | 17 | 16 | `VSUP_IMPLAUSIBLE` | WARN | none (clamp already holds tight) | clears on re-trust | `ctrl_vsup_guard()` distrust active (§5.1.1) | Field supply reading distrusted | 1L+7S |
 | 18 | 17 | `BATT_TEMP_REQUIRED` | FAULT | BLOCK charge (auto-resume) | no | `control.c` — `require_batt_temp` set and `batt_temp_c` NaN (GH#40) | Battery temp required - charge blocked | 1L+8S |
+| 19 | 18 | `DRIVER_OVERTEMP` | CRITICAL | OPEN | until reset | driver NTC (PA3) ≥ 125 °C (`control.c`, GH#39) — matches stock's single fault threshold (§0.6 V8, `0x4029`); the graduated derate ahead of it (§5.1) is `ctrl_ceilings_t.driver_thermal_w`, an arbitration ceiling, not a fault bit | Driver over-temp - field opened | 1L+9S |
 
 Latching rule (implemented, `control.c`): **OPEN-class codes latch until MCU
 reset** (power cycle / watchdog reboot; a deliberate fault-clear command does
@@ -1158,26 +1189,36 @@ contract.
 
 ### 9.3 Code↔spec reconciliation — every mismatch found (GH#34 pass, 2026-07-28)
 
-Found while producing §9.1; listed rather than papered over. None are fixed in
-this pass — D1 and D2 land on the fault ladder and take the safety-review
-gate.
+Found while producing §9.1; listed rather than papered over.
 
-- **D1 — `SHUNT_OPEN` / `SHUNT_REVERSED` are classified as nothing.** They
-  appear in no `faults.h` mask, so `ctrl_fault_severity()` returns INFO and
-  the disposition is CONTINUE — but §7 lists shunt-open/reversed detection as
-  a *fault* ("claimed current with static VBat → fault, not runaway"). Intent:
-  FAULT + LIMP (a lying current source is the `IMPLAUSIBLE_SHUNT` class). Mask
-  change = fault-ladder change → safety gate.
-- **D2 — `SELF_OVERTEMP` conflates two sensors and under-acts.** One bit
-  covers both "alternator hot-spot ≥ 120 °C" and "driver-stage NTC ≥ 120 °C";
-  the wire text ("Regulator over temperature") is wrong for the alternator
-  case; and the classification is WARN/CONTINUE, so neither condition affects
-  the field by itself (the alternator is only saved by the thermal governor's
-  independent ceiling; the driver stage by nothing — the §5.1 [SPEC-GAP],
-  GH#39; stock faults it at 125 °C). Intended shape: separate bits
-  (append-only — the alternator condition takes a NEW code; `SELF_OVERTEMP`
-  keeps code 5 for the driver stage) plus a real driver derate. Thresholds are
-  GH#39's to settle, not this pass's.
+- **D1 — RETIRED 2026-07-28 (GH#41).** `SHUNT_OPEN` / `SHUNT_REVERSED`
+  appeared in no `faults.h` mask, so `ctrl_fault_severity()` returned INFO and
+  the disposition was CONTINUE — but §7 lists shunt-open/reversed detection
+  as a *fault* ("claimed current with static VBat → fault, not runaway").
+  Fixed: both now join `CTRL_FAULT_LIMP_MASK` (the `IMPLAUSIBLE_SHUNT`
+  class — a lying current source cannot be trusted). The mask fix was the
+  symptom; the real deliverable is `control/test/test_faults.c`'s
+  `test_fault_mask_completeness()`, which enumerates every bit position
+  against `CTRL_FAULT_ALL_MASK` (`faults.h`) programmatically so a future
+  fault bit added without mask membership fails the build instead of
+  defaulting to CONTINUE the way D1 did.
+- **D2 — `SELF_OVERTEMP` conflates two sensors and under-acts. NOT resolved
+  by GH#39 (2026-07-28) — still open, by explicit decision, not oversight.**
+  One bit still covers both "alternator hot-spot ≥ 120 °C" and "driver-stage
+  NTC ≥ 120 °C"; the wire text ("Regulator over temperature") is still wrong
+  for the alternator case; the bit is still WARN/CONTINUE. What DID change:
+  the "under-acts" half is fixed for the driver side specifically — GH#39
+  added `CTRL_FAULT_DRIVER_OVERTEMP` (§9.1 code 19) as a NEW, driver-only,
+  OPEN-class bit at 125 °C, plus a graduated derate ceiling
+  (`driver_thermal_w`) ahead of it — so the driver stage is no longer
+  unguarded, it just isn't guarded by *splitting* `SELF_OVERTEMP`. The
+  originally-intended shape here (append-only: the alternator condition takes
+  a new code, `SELF_OVERTEMP` keeps code 5 for the driver stage alone) was
+  judged out of scope for the GH#39/#41/#43 batch — it is a bigger change
+  (retext the wire string, decide whether the alternator gets its own
+  disposition, re-verify every consumer of `SELF_OVERTEMP`) than "give the
+  driver stage a working guard," and conflating the two would have made this
+  batch harder to review. Left for a dedicated pass.
 - **D3 — nine codes have no v1 detector** (2, 3, 4, 6, 7, 8, 9, 13, 15; and
   code 14's in-core plausibility half is also missing). Their codes,
   severities, and texts are fixed *now* so detectors can land later without

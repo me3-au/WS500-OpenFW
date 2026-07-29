@@ -213,10 +213,15 @@ int n2k_encode_127750(const ctrl_telemetry_t *t, uint8_t connection,
     else                                    op = 0u;    /* standby → off */
 
     /* 2-bit status fields: 0 ok, 1 warning, 2 over-limit, 3 not available. */
-    if (t->faults & (CTRL_FAULT_SELF_OVERTEMP | CTRL_FAULT_BATT_HIGHTEMP))
+    /* GH#39: the driver-stage governor and its 125 C fault report here on the
+     * same footing as the alternator's — omitting them made an MFD read
+     * "temperature OK" while the field was actively being derated for a hot
+     * switch stage, which is the one moment the field is worth reporting. */
+    if (t->faults & (CTRL_FAULT_SELF_OVERTEMP | CTRL_FAULT_BATT_HIGHTEMP |
+                     CTRL_FAULT_DRIVER_OVERTEMP))
         temp_state = 2u;
-    else if (t->binding == CTRL_BIND_THERMAL)
-        temp_state = 1u;                    /* governor is derating */
+    else if (t->binding == CTRL_BIND_THERMAL || t->binding == CTRL_BIND_DRIVER_THERMAL)
+        temp_state = 1u;                    /* a governor is derating */
     else
         temp_state = 0u;
     bits = (uint8_t)(temp_state            /* temperature state   b0-1 */
@@ -314,6 +319,7 @@ const char *n2k_alert_text(uint32_t fault_bit)
     case CTRL_FAULT_WATCHDOG:         return "Watchdog reset - field opened";
     case CTRL_FAULT_VSUP_IMPLAUSIBLE: return "Field supply reading distrusted";
     case CTRL_FAULT_BATT_TEMP_REQUIRED: return "Battery temp required - charge blocked";
+    case CTRL_FAULT_DRIVER_OVERTEMP:  return "Driver over-temp - field opened";
     default:                          return "unknown fault";
     }
 }

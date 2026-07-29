@@ -29,7 +29,8 @@ extern int g_fails;
 static inline ctrl_ceilings_t test_ceil_none(void)
 {
     ctrl_ceilings_t c = {
-        .thermal_w = CTRL_CEILING_INACTIVE, .bms_ccl_w = CTRL_CEILING_INACTIVE,
+        .thermal_w = CTRL_CEILING_INACTIVE, .driver_thermal_w = CTRL_CEILING_INACTIVE,
+        .bms_ccl_w = CTRL_CEILING_INACTIVE,
         .battery_c_w = CTRL_CEILING_INACTIVE, .wiring_w = CTRL_CEILING_INACTIVE,
         .alt_absolute_w = CTRL_CEILING_INACTIVE, .alt_capability_w = CTRL_CEILING_INACTIVE,
         .belt_w = CTRL_CEILING_INACTIVE, .engine_w = CTRL_CEILING_INACTIVE,

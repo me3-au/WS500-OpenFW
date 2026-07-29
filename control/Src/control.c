@@ -19,6 +19,11 @@
 #define OV_VCELL_HARD      3.70f   /* per-cell overvoltage kill (above bulk 3.60) */
 #define ALT_HOT_HARD_C     120.0f
 #define DRIVER_HOT_HARD_C  120.0f
+/* GH#39, [SPEC-SIGNOFF] bench-pending: hard block matching the stock firmware's
+ * single 125 C driver-stage fault (§0.6 V8, `0x4029`). Not derived from a
+ * thermal model of THIS board — we have none — chosen only to equal the one
+ * number RE gave us, so v1 is never weaker than the firmware it replaces. */
+#define DRIVER_HOT_CRIT_C  125.0f
 #define BATT_LOW_C         0.0f    /* Li low-temp charge cutoff */
 #define BATT_HIGH_C        55.0f   /* high-temp charge abort */
 
@@ -162,6 +167,11 @@ ctrl_command_t ctrl_tick(ctrl_t *c,
     }
     if (!isnan(m->alt_hotspot_c) && m->alt_hotspot_c >= ALT_HOT_HARD_C)   faults |= CTRL_FAULT_SELF_OVERTEMP;
     if (!isnan(m->driver_temp_c) && m->driver_temp_c >= DRIVER_HOT_HARD_C) faults |= CTRL_FAULT_SELF_OVERTEMP;
+    /* GH#39: driver-only hard block, deliberately a SEPARATE bit from the WARN
+     * above rather than a disposition change to SELF_OVERTEMP — that bit stays
+     * WARN/CONTINUE and still conflates the alt+driver readings (§9.3 D2, not
+     * resolved here; see faults.h for why DRIVER_OVERTEMP is its own bit). */
+    if (!isnan(m->driver_temp_c) && m->driver_temp_c >= DRIVER_HOT_CRIT_C) faults |= CTRL_FAULT_DRIVER_OVERTEMP;
     if (!isnan(m->batt_temp_c)) {
         if (m->batt_temp_c <= BATT_LOW_C)  faults |= CTRL_FAULT_BATT_LOWTEMP;
         if (m->batt_temp_c >= BATT_HIGH_C) faults |= CTRL_FAULT_BATT_HIGHTEMP;
