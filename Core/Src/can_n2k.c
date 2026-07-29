@@ -358,6 +358,28 @@ void can_n2k_init(void)
     CAN_FilterTypeDef filt = {0};
     uint16_t hi, lo, mhi, mlo;
 
+    /* GH#38 requirement 3: if HSE did not come up, SYSCLK is the HSI48
+     * fallback, whose +/-3% error is enough for this node to corrupt an
+     * otherwise healthy bus with error frames. Going CAN-quiet is the
+     * neighbourly failure, not merely the safe one, so suppress Tx on BOTH
+     * dialects rather than flagging the wire data as suspect -- nothing in
+     * the N2K/RV-C schemas defines an "ignore my bit-timing" signal, and a
+     * listener that ignored such a novel field would still see frames at the
+     * wrong bit rate. Not transmitting removes the risk categorically instead
+     * of trusting every listener to opt in to distrust.
+     *
+     * The decision lives here rather than in board_clock_config() (where it
+     * originally sat) because board.c is shared with test-fw, which does not
+     * link this file. Reusing the existing dialect flags rather than adding a
+     * suppression path: can_n2k_publish() already no-ops per-dialect on them.
+     * Ordering holds -- main.c runs board_init() before can_n2k_init(), so
+     * s_hse_ok is latched by the time this reads it -- and nothing re-enables
+     * a dialect afterwards (the setters have no other caller in-tree). */
+    if (!board_clock_running_on_hse()) {
+        s_n2k_enabled = false;
+        s_rvc_enabled = false;
+    }
+
     s_hcan.Instance = CAN;
     /* 250 kbit/s from PCLK1 = 48 MHz (board_clock_config(): APB1CLKDivider
      * = DIV1, so PCLK1 = HCLK = 48 MHz, board.c). tq/bit = PCLK1 /

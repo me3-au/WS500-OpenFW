@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: MIT
  */
 #include "board.h"
-#include "can_n2k.h"   /* can_n2k_set_n2k_enabled()/set_rvc_enabled(): see the
-                        * HSE-fallback CAN-suppression comment below. */
 
 static bool s_hse_ok;   /* latched at boot; board_clock_running_on_hse() */
 
@@ -93,31 +91,17 @@ static void board_clock_fallback_hsi48(void)
 void board_clock_config(void)
 {
     s_hse_ok = board_clock_try_hse();
-    if (!s_hse_ok) {
-        board_clock_fallback_hsi48();
-
-        /* GH#38 requirement 3: a node transmitting at up to +/-3% clock error
-         * can corrupt an otherwise healthy bus with error frames, so going
-         * CAN-quiet is the neighbourly failure, not merely the safe one --
-         * suppress Tx on BOTH dialects rather than just flagging the wire
-         * data as suspect. Mechanism: the existing public dialect switches
-         * (can_n2k_set_n2k_enabled()/set_rvc_enabled(), can_n2k.h) rather
-         * than a new suppression path in can_n2k.c -- can_n2k_publish()
-         * already no-ops per-dialect on these flags (can_n2k.c), so this
-         * reuses a seam that already exists instead of adding one. Safe to
-         * call this early: main.c calls board_init() (which reaches this)
-         * BEFORE can_n2k_init(), and can_n2k_init() never resets these
-         * flags, so the false set here is not clobbered by the port coming
-         * up afterwards. A flag-only alternative (publish anyway, mark the
-         * telemetry payload untrustworthy) was rejected: nothing in the N2K/
-         * RV-C wire schemas defines an "ignore my bit-timing" signal, and a
-         * downstream node that does not honour a novel diagnostic field
-         * would still see frames arriving at the wrong bit rate -- actually
-         * not transmitting removes the corruption risk categorically rather
-         * than trusting every listener to opt in to distrust. */
-        can_n2k_set_n2k_enabled(false);
-        can_n2k_set_rvc_enabled(false);
-    }
+    if (!s_hse_ok) board_clock_fallback_hsi48();
+    /* GH#38 requirement 3 -- "if the clock is untrusted, go CAN-quiet" -- is
+     * enforced by can_n2k_init() reading board_clock_running_on_hse(), NOT
+     * from here. This file originally called the dialect switches directly
+     * and that broke the test-fw link: board.c is shared by both firmware
+     * targets (CMakeLists.txt) and test-fw deliberately excludes can_n2k.c,
+     * so the reference was undefined there. Direction of the dependency is
+     * the fix -- board.c reports what the clock did and owns no policy about
+     * who may transmit; the CAN layer, which already owns the dialect flags,
+     * consults that fact. Same behaviour, one fewer outbound edge from the
+     * lowest layer in the tree. */
 
     /* USB clock: HSI48, independent of whichever SYSCLK path above won --
      * USB tolerates CRS trim-when-present regardless (GH#38). If the fallback
